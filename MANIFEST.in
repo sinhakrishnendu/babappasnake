@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+include Snakefile
+recursive-include config *
+recursive-include envs *
+recursive-include workflow *
+recursive-include src/babappasnake/_bundle *
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo

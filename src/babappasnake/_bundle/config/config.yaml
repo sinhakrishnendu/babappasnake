@@ -1,0 +1,100 @@
+proteomes_dir: "0_raw_proteomes/fixed_seqs_for_use"
+query_fasta: "1_RBH/query_protein.fasta"
+query_taxon_name: "Anopheles gambiae"
+outgroup_name: "Culex quinquefasciatus"
+species_metadata_tsv: "config/species_metadata.tsv"
+cds_input_fasta: ""
+
+results_dir: "results"
+coverage_thresholds:
+  - 50
+  - 60
+  - 70
+  - 80
+  - 90
+  - 95
+
+proteome_extensions:
+  - ".faa"
+  - ".fa"
+  - ".fasta"
+  - ".fsa"
+  - ".pep"
+  - ".protein"
+
+rbh:
+  search_tool: "blast"
+  evalue: 1.0e-5
+  max_target_seqs: 100
+  diamond_mode: "ultra-sensitive"
+
+threshold_selection:
+  min_relative_retention_of_max: 0.95
+  max_absolute_loss_from_max: 1
+
+post_selection:
+  collapse_identical_proteins: true
+
+clipkit:
+  enabled: true
+  mode: "kpic-smartgap"
+
+alignment:
+  model_path: ""
+  device: "cpu"
+  gap_open: -2.5
+  gap_extend: -0.7
+
+iqtree:
+  input_type: "protein"
+  protein_model: "MFP"
+  cds_model: "MFP"
+  protein_sequence_type: "AA"
+  cds_sequence_type: "DNA"
+  bootstrap: 1000
+  alrt: 1000
+  extra_args: ""
+  redo: true
+
+hyphy:
+  genetic_code: "Universal"
+  branches: "All"
+  absrel:
+    multiple_hits: "None"
+    srv: "No"
+  busted:
+    srv: "Yes"
+    multiple_hits: "None"
+  meme:
+    pvalue: 0.1
+    resample: 0
+    multiple_hits: "None"
+    site_multihit: "Estimate"
+
+codeml:
+  codon_frequency: 7
+  cleandata: 0
+  kappa_initial: 2.0
+  omega_initial: 0.5
+  noisy: 0
+  verbose: 1
+  fallback_branch_count: 3
+  fdr_alpha: 0.05
+  pvalue_method: "branch_site_mixture_01"
+
+threads:
+  rbh: 4
+  clipkit: 1
+  iqtree: 8
+  hyphy: 4
+  codeml: 1
+
+executables:
+  blastp: ""
+  makeblastdb: ""
+  diamond: ""
+  clipkit: ""
+  babappalign: ""
+  hyphy: ""
+  iqtree3: ""
+  codeml: ""

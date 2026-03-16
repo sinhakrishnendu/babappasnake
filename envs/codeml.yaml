@@ -1,0 +1,10 @@
+name: babappasnake-codeml
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas=2.2
+  - scipy=1.15
+  - paml=4.10.*

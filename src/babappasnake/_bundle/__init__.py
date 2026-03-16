@@ -1,0 +1,1 @@
+"""Bundled Snakemake workflow assets."""
