@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,8 +43,23 @@ def write_ctl(path, seqfile, treefile, outfile, fix_omega, omega, args):
 def run_model(codeml, ctl_path, workdir, stdout_log):
     with open(stdout_log, "w") as handle:
         result = subprocess.run([codeml, ctl_path.name], cwd=workdir, stdout=handle, stderr=subprocess.STDOUT)
-    if result.returncode != 0:
-        raise RuntimeError(f"codeml failed for {ctl_path} with exit code {result.returncode}")
+    return result.returncode
+
+
+def has_parseable_lnl(path):
+    if not path.exists():
+        return False
+    text = path.read_text(errors="ignore")
+    return re.search(r"lnL\(ntime:\s*\d+\s+np:\s*\d+\):\s*[-\d.]+", text) is not None
+
+
+def salvage_output(output_path, stdout_path):
+    if has_parseable_lnl(output_path):
+        return True
+    if has_parseable_lnl(stdout_path):
+        shutil.copyfile(stdout_path, output_path)
+        return True
+    return False
 
 
 def main():
@@ -66,8 +82,10 @@ def main():
     workdir.mkdir(parents=True, exist_ok=True)
     alignment_copy = workdir / "aligned_cds.fasta"
     tree_copy = workdir / "foreground.treefile"
-    shutil.copyfile(args.alignment_fasta, alignment_copy)
-    shutil.copyfile(args.foreground_tree, tree_copy)
+    if Path(args.alignment_fasta).resolve() != alignment_copy.resolve():
+        shutil.copyfile(args.alignment_fasta, alignment_copy)
+    if Path(args.foreground_tree).resolve() != tree_copy.resolve():
+        shutil.copyfile(args.foreground_tree, tree_copy)
 
     alt_dir = workdir / "branch_site_alt"
     null_dir = workdir / "branch_site_null"
@@ -76,13 +94,30 @@ def main():
 
     alt_ctl = alt_dir / "codeml.ctl"
     null_ctl = null_dir / "codeml.ctl"
+    alt_out = alt_dir / "output.txt"
+    null_out = null_dir / "output.txt"
     write_ctl(alt_ctl, "../aligned_cds.fasta", "../foreground.treefile", "output.txt", 0, args.omega_initial, args)
     write_ctl(null_ctl, "../aligned_cds.fasta", "../foreground.treefile", "output.txt", 1, 1.0, args)
 
-    run_model(args.codeml, alt_ctl, alt_dir, alt_dir / "codeml.stdout.log")
-    run_model(args.codeml, null_ctl, null_dir, null_dir / "codeml.stdout.log")
+    alt_stdout = alt_dir / "codeml.stdout.log"
+    null_stdout = null_dir / "codeml.stdout.log"
+    alt_code = run_model(args.codeml, alt_ctl, alt_dir, alt_stdout)
+    alt_ok = salvage_output(alt_out, alt_stdout)
+    if not alt_ok:
+        raise RuntimeError(
+            f"codeml branch-site alternative model did not produce a parseable lnL for "
+            f"{args.branch_name} (exit code {alt_code})"
+        )
 
-    if not (alt_dir / "output.txt").exists() or not (null_dir / "output.txt").exists():
+    null_code = run_model(args.codeml, null_ctl, null_dir, null_stdout)
+    null_ok = salvage_output(null_out, null_stdout)
+    if not null_ok:
+        raise RuntimeError(
+            f"codeml branch-site null model did not produce a parseable lnL for "
+            f"{args.branch_name} (exit code {null_code})"
+        )
+
+    if not alt_out.exists() or not null_out.exists():
         raise FileNotFoundError(
             f"codeml did not produce both branch-site outputs for branch {args.branch_name}"
         )

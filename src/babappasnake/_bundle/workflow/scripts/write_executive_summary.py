@@ -149,7 +149,9 @@ def main():
     lines.append("  - Branch-site results before/after BH correction:")
     for row in codeml_rows:
         lines.append(
-            f"    * {row['branch_name']}: raw_p={float(row['raw_p_value']):.4g}, "
+            f"    * {row['branch_name']}: lnL_alt={float(row['lnL_alt']):.3f}, "
+            f"lnL_null={float(row['lnL_null']):.3f}, LRT={float(row['lrt_statistic']):.3f}, "
+            f"raw_p={float(row['raw_p_value']):.4g}, "
             f"bh_fdr={float(row['bh_fdr']):.4g}, significant={row['significant_after_bh']}"
         )
 

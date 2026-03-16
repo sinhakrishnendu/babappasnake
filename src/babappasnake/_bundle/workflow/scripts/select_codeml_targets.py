@@ -2,7 +2,12 @@
 import argparse
 import csv
 import json
+import re
 from pathlib import Path
+
+
+def is_leaf_branch(row):
+    return not re.fullmatch(r"Node\d+", row["branch_name"] or "")
 
 
 def main():
@@ -14,9 +19,13 @@ def main():
     args = parser.parse_args()
 
     with open(args.absrel_table) as handle:
-        rows = [row for row in csv.DictReader(handle, delimiter="\t") if row.get("tested_role") == "test"]
+        rows = [
+            row
+            for row in csv.DictReader(handle, delimiter="\t")
+            if row.get("tested_role") == "test" and is_leaf_branch(row)
+        ]
     if not rows:
-        raise ValueError("No testable branches were present in the aBSREL summary.")
+        raise ValueError("No testable leaf branches were present in the aBSREL summary.")
 
     for row in rows:
         row["p_uncorrected_float"] = float(row["p_uncorrected"] or 1.0)
@@ -30,7 +39,7 @@ def main():
             selected.append(
                 {
                     "branch_id": row["branch_name"],
-                    "branch_name": row["branch_name"],
+                    "branch_name": row["original_name"] or row["branch_name"],
                     "original_name": row["original_name"],
                     "selection_strategy": "significant_absrel",
                     "absrel_rank": rank,
@@ -40,14 +49,17 @@ def main():
                     "reason": "aBSREL significant after branch-wise correction",
                 }
             )
-        strategy_summary = "Used all aBSREL-significant branches for codeml foreground testing."
+        strategy_summary = (
+            "Used all aBSREL-significant terminal branches for codeml foreground testing; "
+            "internal nodes were excluded."
+        )
     else:
         fallback = sorted(rows, key=lambda row: row["p_uncorrected_float"])[: args.fallback_count]
         for rank, row in enumerate(fallback, start=1):
             selected.append(
                 {
                     "branch_id": row["branch_name"],
-                    "branch_name": row["branch_name"],
+                    "branch_name": row["original_name"] or row["branch_name"],
                     "original_name": row["original_name"],
                     "selection_strategy": "fallback_lowest_absrel_p",
                     "absrel_rank": rank,
@@ -59,7 +71,7 @@ def main():
             )
         strategy_summary = (
             f"No significant aBSREL branches were detected; selected the top {len(selected)} "
-            "lowest-p branches for branch-site follow-up."
+            "lowest-p terminal branches for branch-site follow-up, excluding internal nodes."
         )
 
     with open(args.selection_out, "w", newline="") as handle:

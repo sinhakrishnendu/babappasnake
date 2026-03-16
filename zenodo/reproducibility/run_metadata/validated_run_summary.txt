@@ -1,0 +1,37 @@
+Validated packaged run summary for babappasnake v0.2.0
+
+Input dataset
+- Proteomes: cleaned FASTAs from 0_raw_proteomes/fixed_seqs_for_use
+- Query protein: AGAP006914-RA
+- Outgroup: Culex quinquefasciatus
+
+Orthogroup selection
+- Selected coverage threshold: 90%
+- Final RBH ortholog count: 30
+- Final downstream analysis member count: 29
+- Outgroup retained in final orthogroup: yes
+- One identical protein was collapsed before the CDS checkpoint
+
+Alignment and tree
+- ClipKIT enabled: yes
+- IQ-TREE input mode: protein
+- Downstream CDS mode: codon-safe trimmed CDS alignment
+- IQ-TREE best model: VT+I+G4
+
+HyPhy findings
+- aBSREL significant terminal branches used for codeml: 4
+- BUSTED significant: yes
+- MEME significant sites: 13
+
+codeml branch-site follow-up
+- Foreground policy: terminal branches only
+- Models run per branch: branch-site alternative and branch-site null
+- Tested branches: 4
+- Significant after BH correction: 3
+- Significant branches after BH correction:
+  - ACOM031534-RA_Anopheles_coluzzii_Mali-NIH
+  - AMIN007689-RA_Anopheles_minimus_MINIMUS1
+  - ASTEI20_037186.R47360_Anopheles_stephensi_UCISS2018
+
+Primary final report
+- reproducibility/results/results_pkg_live/reports/executive_summary.txt

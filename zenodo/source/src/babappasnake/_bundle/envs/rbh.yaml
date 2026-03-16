@@ -1,0 +1,11 @@
+name: babappasnake-rbh
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - blast=2.16
+  - diamond=2.1
+  - biopython=1.84
+  - pandas=2.2

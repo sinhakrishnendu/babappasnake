@@ -1,0 +1,9 @@
+name: babappasnake-hyphy
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas=2.2
+  - hyphy=2.5.*

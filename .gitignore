@@ -11,6 +11,11 @@ dist/
 *.egg-info/
 .venv/
 .venv_pkgtest/
+config/package_live_override.yaml
+/rst
+/rst1
+/rub
+babappasnake-v*-zenodo.tar.gz
 results/
 results*/
 /.cache/

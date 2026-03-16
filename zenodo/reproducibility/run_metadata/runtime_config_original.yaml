@@ -1,0 +1,13 @@
+executables:
+  babappalign: /opt/homebrew/Caskroom/miniconda/base/envs/molevo/bin/babappalign
+proteomes_dir: /Users/krishnendu/Desktop/BABAPPAsnake/0_raw_proteomes/fixed_seqs_for_use
+query_fasta: /Users/krishnendu/Desktop/BABAPPAsnake/1_RBH/query_protein.fasta
+outgroup_name: Culex quinquefasciatus
+results_dir: /Users/krishnendu/Desktop/BABAPPAsnake/results_pkg_live
+cds_input_fasta: /Users/krishnendu/Desktop/BABAPPAsnake/1_RBH/cds.fasta
+clipkit:
+  enabled: true
+iqtree:
+  input_type: protein
+alignment:
+  model_path: /Users/krishnendu/.cache/babappalign/models/babappascore.pt

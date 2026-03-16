@@ -1,0 +1,13 @@
+path	category	description
+source/	source	Exact babappasnake v0.2.0 source snapshot required to inspect or rebuild the workflow.
+distributions/	distribution	Built v0.2.0 wheel and source distribution artifacts.
+reproducibility/inputs/	inputs	Curated input FASTAs used for the validated packaged run.
+reproducibility/results/results_pkg_live/	results	Curated successful packaged workflow outputs from the validated real-data run.
+reproducibility/run_metadata/software_versions.txt	metadata	Recorded software versions used for the validated run and release.
+reproducibility/run_metadata/runtime_config_original.yaml	metadata	Original runtime config captured from the validated run.
+reproducibility/run_metadata/runtime_config_archive_example.yaml	metadata	Archive-relative runtime config example for replay.
+reproducibility/run_metadata/validated_run_command.txt	metadata	Original validation command plus archive-relative replay command.
+reproducibility/run_metadata/path_remapping.txt	metadata	Map from original machine paths to archive-relative paths.
+reproducibility/run_metadata/validated_run_summary.txt	metadata	Short summary of the validated run outcomes.
+README.md	documentation	Top-level Zenodo bundle guide.
+SHA256SUMS.txt	integrity	SHA-256 checksums for the archived payload.
