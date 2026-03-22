@@ -1,8 +1,0 @@
-name: babappasnake-clipkit
-channels:
-  - conda-forge
-  - bioconda
-  - defaults
-dependencies:
-  - python=3.10
-  - clipkit=2.7.*

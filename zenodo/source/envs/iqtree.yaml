@@ -1,9 +1,0 @@
-name: babappasnake-iqtree
-channels:
-  - conda-forge
-  - bioconda
-  - defaults
-dependencies:
-  - python=3.10
-  - biopython=1.84
-  - iqtree=3.*
