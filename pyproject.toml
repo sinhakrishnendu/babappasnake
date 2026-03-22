@@ -37,5 +37,6 @@ babappasnake = ["workflow/Snakefile", "workflow/config_template.yaml"]
 "*" = ["*.py[cod]", "__pycache__/*", "*/__pycache__/*", ".DS_Store", "*/.DS_Store"]
 
 [tool.setuptools.packages.find]
+namespaces = false
 include = ["babappasnake*"]
 exclude = ["data*", "tests*", "docs*", "examples*", "*.__pycache__*"]
