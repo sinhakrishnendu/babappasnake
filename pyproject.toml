@@ -28,11 +28,14 @@ dependencies = [
 babappasnake = "babappasnake.cli:main"
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
 
 [tool.setuptools.package-data]
-babappasnake = ["workflow/Snakefile", "workflow/config_template.yaml", "workflow/templates/*"]
+babappasnake = ["workflow/Snakefile", "workflow/config_template.yaml"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.py[cod]", "__pycache__/*", "*/__pycache__/*", ".DS_Store", "*/.DS_Store"]
 
 [tool.setuptools.packages.find]
 include = ["babappasnake*"]
-exclude = ["data*", "tests*", "docs*", "examples*"]
+exclude = ["data*", "tests*", "docs*", "examples*", "*.__pycache__*"]

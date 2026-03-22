@@ -1,2 +1,5 @@
 recursive-include babappasnake/workflow *
-recursive-include babappasnake/scripts *
+include LICENSE
+prune babappasnake/__pycache__
+prune babappasnake/scripts/__pycache__
+global-exclude *.py[cod] .DS_Store
