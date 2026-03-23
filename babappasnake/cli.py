@@ -17,6 +17,7 @@ from babappasnake.utils import format_missing_tools, resolve_tools
 
 
 IQTREE_BOOTSTRAP_CHOICES = (1000, 5000, 10000)
+CODEML_CODONFREQ_CHOICES = (1, 2, 7)
 CLIPKIT_MODE_CHOICES = (
     "kpi",
     "kpic",
@@ -29,6 +30,7 @@ CLIPKIT_MODE_CHOICES = (
     "strict",
     "relaxed",
 )
+HYPHY_BRANCH_CHOICES = ("Leaves", "Internal", "All")
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,48 @@ def prompt_bootstrap(default: int) -> int:
         print("Invalid selection.")
 
 
+def prompt_hyphy_branches(label: str, default: str) -> str:
+    print(label)
+    for idx, option in enumerate(HYPHY_BRANCH_CHOICES, start=1):
+        mark = " (default)" if option == default else ""
+        print(f"  {idx}. {option}{mark}")
+    print("  c. custom text")
+    while True:
+        value = input("Select option (1/2/3/c) or press Enter for default: ").strip()
+        if not value:
+            return default
+        if value in {"1", "2", "3"}:
+            return HYPHY_BRANCH_CHOICES[int(value) - 1]
+        if value.lower() == "c":
+            custom = input("Enter custom HyPhy branches selector: ").strip()
+            if custom:
+                return custom
+            print("Custom selector cannot be empty.")
+            continue
+        if value in HYPHY_BRANCH_CHOICES:
+            return value
+        print("Invalid selection.")
+
+
+def prompt_codonfreq(default: int) -> int:
+    print("codeml CodonFreq setting")
+    for idx, option in enumerate(CODEML_CODONFREQ_CHOICES, start=1):
+        mark = " (default)" if option == default else ""
+        print(f"  {idx}. {option}{mark}")
+    print("  c. custom integer")
+    while True:
+        value = input("Select option (1/2/3/c) or press Enter for default: ").strip().lower()
+        if not value:
+            return default
+        if value in {"1", "2", "3"}:
+            return CODEML_CODONFREQ_CHOICES[int(value) - 1]
+        if value == "c":
+            return prompt_int("Enter custom CodonFreq value", default)
+        if value.isdigit():
+            return int(value)
+        print("Invalid selection.")
+
+
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if args.interactive == "no":
         return args
@@ -167,6 +211,15 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.iqtree_bootstrap = prompt_bootstrap(int(args.iqtree_bootstrap))
     args.iqtree_bnni = "yes" if prompt_yes_no("Use IQ-TREE -bnni?", args.iqtree_bnni == "yes") else "no"
     args.iqtree_model = prompt_text("IQ-TREE model string (--iqtree-model)", args.iqtree_model, required=True)
+    args.absrel_branches = prompt_hyphy_branches(
+        "HyPhy aBSREL branches selector (--absrel-branches)",
+        str(args.absrel_branches),
+    )
+    args.meme_branches = prompt_hyphy_branches(
+        "HyPhy MEME branches selector (--meme-branches)",
+        str(args.meme_branches),
+    )
+    args.codeml_codonfreq = prompt_codonfreq(int(args.codeml_codonfreq))
     args.absrel_p = prompt_float("aBSREL compatibility threshold (--absrel-p)", float(args.absrel_p))
     args.absrel_dynamic_start = prompt_float(
         "Dynamic aBSREL start p (--absrel-dynamic-start)",
@@ -197,6 +250,9 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- iqtree_bootstrap: {args.iqtree_bootstrap}")
     print(f"- iqtree_bnni: {args.iqtree_bnni}")
     print(f"- iqtree_model: {args.iqtree_model}")
+    print(f"- absrel_branches: {args.absrel_branches}")
+    print(f"- meme_branches: {args.meme_branches}")
+    print(f"- codeml_codonfreq: {args.codeml_codonfreq}")
     print("- cds: prompted after orthogroup definition")
     print("- outgroup: prompted after CDS step (optional)")
     print(f"- guided: {args.guided}")
@@ -221,6 +277,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iqtree-bootstrap", type=int, default=1000, help="IQ-TREE ultrafast bootstrap replicates [default: 1000]")
     p.add_argument("--iqtree-bnni", choices=["yes", "no"], default="no", help="Enable IQ-TREE -bnni [default: no]")
     p.add_argument("--iqtree-model", default="MFP", help="IQ-TREE model string [default: MFP]")
+    p.add_argument("--absrel-branches", default="Leaves", help="HyPhy aBSREL branches selector [default: Leaves]")
+    p.add_argument("--meme-branches", default="Leaves", help="HyPhy MEME branches selector [default: Leaves]")
+    p.add_argument("--codeml-codonfreq", type=int, default=2, help="codeml CodonFreq value [default: 2]")
     p.add_argument("--clipkit-mode-protein", default="kpic-smart-gap", help="ClipKIT mode for protein trimming")
     p.add_argument("--clipkit-mode-codon", default="kpic-smart-gap", help="ClipKIT mode for codon trimming")
     p.add_argument("--absrel-p", type=float, default=0.1, help="Leaf-branch significance threshold for aBSREL [default: 0.1]")
@@ -283,6 +342,9 @@ def write_config(args: argparse.Namespace, outdir: Path, executables: dict[str, 
         "iqtree_bootstrap": int(args.iqtree_bootstrap),
         "iqtree_bnni": args.iqtree_bnni == "yes",
         "iqtree_model": str(args.iqtree_model).strip(),
+        "absrel_branches": str(args.absrel_branches).strip() or "Leaves",
+        "meme_branches": str(args.meme_branches).strip() or "Leaves",
+        "codeml_codonfreq": int(args.codeml_codonfreq),
         "use_clipkit": args.use_clipkit == "yes",
         "clipkit_mode_protein": str(args.clipkit_mode_protein).strip(),
         "clipkit_mode_codon": str(args.clipkit_mode_codon).strip(),

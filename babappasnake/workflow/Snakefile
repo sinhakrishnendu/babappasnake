@@ -18,6 +18,9 @@ CLIPKIT_MODE_CODON = str(config.get("clipkit_mode_codon", "kpic-smart-gap")).str
 IQTREE_MODEL = str(config.get("iqtree_model", "MFP")).strip() or "MFP"
 IQTREE_BOOTSTRAP = int(config.get("iqtree_bootstrap", 1000))
 IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
+ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
+MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
+CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 2))
 EXE = config.get("executables", {})
 BLASTP = EXE["blastp"]
 MAKEBLASTDB = EXE["makeblastdb"]
@@ -225,7 +228,8 @@ if HAVE_CDS:
               --alignment {input.aln} \
               --tree {input.tree} \
               --outdir {OUTDIR}/asr \
-              --codeml "{CODEML}"
+              --codeml "{CODEML}" \
+              --codonfreq {CODEML_CODONFREQ}
             test -f {output.done}
             test -f {output.mlc}
             test -f {output.rst}
@@ -248,7 +252,9 @@ if HAVE_CDS:
               --tree {input.tree} \
               --outdir {OUTDIR}/hyphy \
               --threads {threads} \
-              --hyphy "{HYPHY}"
+              --hyphy "{HYPHY}" \
+              --absrel-branches {ABSREL_BRANCHES:q} \
+              --meme-branches {MEME_BRANCHES:q}
             test -f {output.done}
             test -f {output.absrel}
             test -f {output.meme}
@@ -309,6 +315,7 @@ if HAVE_CDS:
               --foreground-list {input.lst} \
               --out-tsv {output.tsv} \
               --codeml "{CODEML}" \
+              --codonfreq {CODEML_CODONFREQ} \
               --jobs {threads}
             '''
 

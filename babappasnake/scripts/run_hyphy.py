@@ -28,6 +28,8 @@ def main() -> None:
     p.add_argument("--outdir", required=True)
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--hyphy", default="hyphy")
+    p.add_argument("--absrel-branches", default="Leaves")
+    p.add_argument("--meme-branches", default="Leaves")
     a = p.parse_args()
     outdir = Path(a.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -39,14 +41,14 @@ def main() -> None:
         a.hyphy, "absrel",
         "--alignment", a.cds_aln,
         "--tree", a.tree,
-        "--branches", "Leaves",
+        "--branches", a.absrel_branches,
         "--output", str(absrel_json),
     ])
     run([
         a.hyphy, "meme",
         "--alignment", a.cds_aln,
         "--tree", a.tree,
-        "--branches", "Leaves",
+        "--branches", a.meme_branches,
         "--output", str(meme_json),
     ])
 

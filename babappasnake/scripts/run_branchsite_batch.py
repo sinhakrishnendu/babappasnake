@@ -19,7 +19,7 @@ ALT_CTL = """      seqfile = {seqfile}
       verbose = 1
       runmode = 0
       seqtype = 1
-    CodonFreq = 2
+    CodonFreq = {codonfreq}
         clock = 0
        aaDist = 0
            aaRatefile = wag.dat
@@ -86,7 +86,7 @@ def run_codeml_and_get_lnl(codeml_exe: str, ctl_path: Path, workdir: Path, mlc_p
     return lnl
 
 
-def run_one_foreground(fg: str, aln: str, tree_dir: Path, codeml_exe: str) -> tuple[str, float, float, float, float]:
+def run_one_foreground(fg: str, aln: str, tree_dir: Path, codeml_exe: str, codonfreq: int) -> tuple[str, float, float, float, float]:
     safe = fg.replace("/", "_")
     fg_dir = tree_dir / safe
     fg_dir.mkdir(parents=True, exist_ok=True)
@@ -101,11 +101,13 @@ def run_one_foreground(fg: str, aln: str, tree_dir: Path, codeml_exe: str) -> tu
         seqfile=aln,
         treefile=treefile,
         outfile=str((alt_dir / "mlc_alt.txt").resolve()),
+        codonfreq=codonfreq,
     )
     null_ctl = NULL_CTL.format(
         seqfile=aln,
         treefile=treefile,
         outfile=str((null_dir / "mlc_null.txt").resolve()),
+        codonfreq=codonfreq,
     )
 
     (alt_dir / "codeml.ctl").write_text(alt_ctl, encoding="utf-8")
@@ -139,6 +141,7 @@ def main() -> None:
     p.add_argument("--foreground-list", required=True)
     p.add_argument("--out-tsv", required=True)
     p.add_argument("--codeml", default="codeml")
+    p.add_argument("--codonfreq", type=int, default=2)
     p.add_argument("--jobs", type=int, default=1)
     a = p.parse_args()
 
@@ -151,13 +154,13 @@ def main() -> None:
     jobs = max(1, int(a.jobs))
     if jobs == 1:
         for fg in foregrounds:
-            fg_name, alt_lnl, null_lnl, lrt, pval = run_one_foreground(fg, aln, tree_dir, a.codeml)
+            fg_name, alt_lnl, null_lnl, lrt, pval = run_one_foreground(fg, aln, tree_dir, a.codeml, int(a.codonfreq))
             pvals_by_fg[fg_name] = pval
             rows_by_fg[fg_name] = [fg_name, alt_lnl, null_lnl, lrt, pval]
     else:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
             fut_to_fg = {
-                ex.submit(run_one_foreground, fg, aln, tree_dir, a.codeml): fg
+                ex.submit(run_one_foreground, fg, aln, tree_dir, a.codeml, int(a.codonfreq)): fg
                 for fg in foregrounds
             }
             for fut in as_completed(fut_to_fg):

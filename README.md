@@ -14,7 +14,7 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 6. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
 7. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`).
 8. Roots the inferred tree using a user-supplied outgroup label query (case-insensitive header matching).
-9. Runs HyPhy aBSREL and MEME on leaf branches (`--branches Leaves`).
+9. Runs HyPhy aBSREL and MEME with user-selected branch scopes (default `Leaves`).
 10. Selects foreground branches from aBSREL using dynamic thresholding.
 11. Runs branch-site `codeml` only for selected branches (alt and null models).
 12. Runs codeml ancestral sequence reconstruction (ASR).
@@ -155,6 +155,9 @@ Options:
 - `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).
 - `--iqtree-bnni {yes,no}`: enable/disable IQ-TREE `-bnni` (default: `no`).
 - `--iqtree-model TEXT`: IQ-TREE model string (default: `MFP`).
+- `--absrel-branches TEXT`: HyPhy aBSREL branch selector (default: `Leaves`; common choices: `Leaves`, `Internal`, `All`).
+- `--meme-branches TEXT`: HyPhy MEME branch selector (default: `Leaves`; common choices: `Leaves`, `Internal`, `All`).
+- `--codeml-codonfreq INT`: codeml `CodonFreq` value for branch-site and ASR runs (default: `2`; e.g. `1`, `2`, `7`).
 - `--absrel-p FLOAT`: compatibility parameter retained in config (dynamic mode is used for branch selection).
 - `--absrel-dynamic-start FLOAT`: dynamic foreground start p-value (default: `0.05`).
 - `--absrel-dynamic-step FLOAT`: dynamic foreground increment (default: `0.01`).

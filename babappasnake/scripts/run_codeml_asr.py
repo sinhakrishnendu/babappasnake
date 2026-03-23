@@ -14,7 +14,7 @@ ASR_CTL = """      seqfile = {seqfile}
       verbose = 1
       runmode = 0
       seqtype = 1
-    CodonFreq = 2
+    CodonFreq = {codonfreq}
         clock = 0
        aaDist = 0
            aaRatefile = wag.dat
@@ -43,6 +43,7 @@ def main() -> None:
     p.add_argument("--tree", required=True)
     p.add_argument("--outdir", required=True)
     p.add_argument("--codeml", default="codeml")
+    p.add_argument("--codonfreq", type=int, default=2)
     a = p.parse_args()
 
     outdir = Path(a.outdir)
@@ -56,6 +57,7 @@ def main() -> None:
             seqfile=str(Path(a.alignment).resolve()),
             treefile=str(Path(a.tree).resolve()),
             outfile=str(mlc.resolve()),
+            codonfreq=int(a.codonfreq),
         ),
         encoding="utf-8",
     )
