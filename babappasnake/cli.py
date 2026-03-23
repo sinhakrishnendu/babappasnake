@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.resources as ir
 import json
 import shlex
@@ -148,8 +149,6 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print("\nInteractive babappasnake configuration\n")
     args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
     args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
-    args.cds = prompt_text("CDS FASTA (--cds, optional)", args.cds or "", required=False) or None
-    args.outgroup = prompt_text("Outgroup query (--outgroup, optional)", args.outgroup or "", required=False)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Threads (--threads)", int(args.threads))
@@ -188,8 +187,6 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print("\nConfiguration summary:")
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
-    print(f"- cds: {args.cds or '(none)'}")
-    print(f"- outgroup: {args.outgroup or '(none)'}")
     print(f"- outdir: {args.outdir}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
@@ -200,6 +197,8 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- iqtree_bootstrap: {args.iqtree_bootstrap}")
     print(f"- iqtree_bnni: {args.iqtree_bnni}")
     print(f"- iqtree_model: {args.iqtree_model}")
+    print("- cds: prompted after orthogroup definition")
+    print("- outgroup: prompted after CDS step (optional)")
     print(f"- guided: {args.guided}")
     if not prompt_yes_no("Proceed with this configuration?", True):
         raise SystemExit(1)
@@ -333,15 +332,6 @@ def build_step_plan(have_cds: bool, use_clipkit: bool) -> list[StepSpec]:
     if not have_cds:
         return [
             StepSpec(
-                "rbh_orthogroup",
-                "Build orthogroup proteins and RBH mapping.",
-                (
-                    "orthogroup/orthogroup_proteins.fasta",
-                    "orthogroup/orthogroup_headers.txt",
-                    "orthogroup/rbh_summary.tsv",
-                ),
-            ),
-            StepSpec(
                 "waiting_note",
                 "Write waiting note for later CDS submission.",
                 ("orthogroup/WAITING_FOR_CDS.txt",),
@@ -349,15 +339,6 @@ def build_step_plan(have_cds: bool, use_clipkit: bool) -> list[StepSpec]:
         ]
 
     steps: list[StepSpec] = [
-        StepSpec(
-            "rbh_orthogroup",
-            "Build orthogroup proteins and RBH mapping.",
-            (
-                "orthogroup/orthogroup_proteins.fasta",
-                "orthogroup/orthogroup_headers.txt",
-                "orthogroup/rbh_summary.tsv",
-            ),
-        ),
         StepSpec(
             "map_cds",
             "Map user CDS to orthogroup proteins with CDS quality filtering.",
@@ -484,7 +465,109 @@ def print_step_outputs(outdir: Path, outputs: tuple[str, ...]) -> None:
             print(f"  - {rel} (missing)")
 
 
+def run_guided_step(
+    config_path: Path,
+    outdir: Path,
+    cores: int,
+    snake_args: str,
+    snakefile: Path,
+    step: StepSpec,
+    index: int,
+    total: int | None,
+) -> int:
+    if total is None:
+        print(f"\nStep {index}: {step.rule}")
+    else:
+        print(f"\nStep {index}/{total}: {step.rule}")
+    print(step.description)
+    existing = tuple((outdir / rel).exists() for rel in step.outputs)
+    can_skip = all(existing)
+    if can_skip:
+        print("All expected outputs for this step already exist.")
+    action = prompt_step_action(can_skip=can_skip)
+    if action == "stop":
+        print("Guided run stopped by user.")
+        return 130
+    if action == "skip":
+        print("Step skipped (existing outputs retained).")
+        print_step_outputs(outdir, step.outputs)
+        return 0
+    code = run_snakemake_target(config_path, cores, step.rule, snake_args, snakefile)
+    if code != 0:
+        return code
+    print_step_outputs(outdir, step.outputs)
+    return 0
+
+
+def print_orthogroup_membership(outdir: Path) -> None:
+    summary = outdir / "orthogroup" / "rbh_summary.tsv"
+    if not summary.exists():
+        print("Orthogroup membership report unavailable (rbh_summary.tsv missing).")
+        return
+
+    included: list[tuple[str, str]] = []
+    omitted: list[str] = []
+    try:
+        with open(summary, "r", encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                species = str(row.get("species", "")).strip() or "(unknown)"
+                ortholog = str(row.get("ortholog", "")).strip()
+                if ortholog and ortholog != "NA":
+                    included.append((species, ortholog))
+                else:
+                    omitted.append(species)
+    except Exception as exc:
+        print(f"Orthogroup membership report unavailable (parse error: {exc}).")
+        return
+
+    print("\nOrthogroup membership summary:")
+    print(f"  Included groups with RBH orthologs: {len(included)}")
+    for species, ortholog in included:
+        print(f"    - {species}: {ortholog}")
+    print(f"  Omitted groups (no RBH hit at current thresholds): {len(omitted)}")
+    for species in omitted:
+        print(f"    - {species}")
+
+
+def prompt_for_cds_after_rbh(args: argparse.Namespace, outdir: Path) -> bool:
+    user_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
+    existing = user_cds.exists() and user_cds.stat().st_size > 0
+    default = str(args.cds) if args.cds else (str(user_cds) if existing else "")
+    print("")
+    print("CDS input step (required for codon/tree/hyphy/codeml downstream).")
+    while True:
+        entered = prompt_text(
+            "Provide CDS FASTA path now (or press Enter to continue without CDS)",
+            default,
+            required=False,
+        ).strip()
+        if not entered:
+            return user_cds.exists() and user_cds.stat().st_size > 0
+
+        candidate = Path(entered).expanduser()
+        if not candidate.is_file():
+            print(f"CDS file not found: {candidate}")
+            default = ""
+            continue
+
+        user_cds.parent.mkdir(parents=True, exist_ok=True)
+        if candidate.resolve() != user_cds.resolve():
+            shutil.copy2(candidate, user_cds)
+        print(f"Staged CDS file: {user_cds}")
+        return True
+
+
+def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
+    with open(config_path, "r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+    cfg["outgroup_query"] = outgroup_query
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(cfg, fh, sort_keys=False)
+
+
 def run_guided_pipeline(
+    args: argparse.Namespace,
     config_path: Path,
     outdir: Path,
     cores: int,
@@ -492,30 +575,63 @@ def run_guided_pipeline(
     snake_args: str,
     snakefile: Path,
 ) -> int:
-    user_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
-    have_cds = user_cds.exists() and user_cds.stat().st_size > 0
-    steps = build_step_plan(have_cds, use_clipkit)
-    print(f"Guided mode enabled. Planned steps: {len(steps)}")
+    rbh_step = StepSpec(
+        "rbh_orthogroup",
+        "Build orthogroup proteins and RBH mapping.",
+        (
+            "orthogroup/orthogroup_proteins.fasta",
+            "orthogroup/orthogroup_headers.txt",
+            "orthogroup/rbh_summary.tsv",
+        ),
+    )
+    print("Guided mode enabled.")
+    code = run_guided_step(
+        config_path=config_path,
+        outdir=outdir,
+        cores=cores,
+        snake_args=snake_args,
+        snakefile=snakefile,
+        step=rbh_step,
+        index=1,
+        total=None,
+    )
+    if code != 0:
+        return code
 
+    print_orthogroup_membership(outdir)
+
+    staged_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
+    have_cds = staged_cds.exists() and staged_cds.stat().st_size > 0
+    if is_tty_interactive():
+        have_cds = prompt_for_cds_after_rbh(args, outdir)
+        outgroup_prompt = prompt_text(
+            "Optional outgroup query for rooting (press Enter to skip)",
+            str(args.outgroup or ""),
+            required=False,
+        ).strip()
+        args.outgroup = outgroup_prompt
+        set_outgroup_in_config(config_path, args.outgroup)
+        if args.outgroup:
+            print(f"Using outgroup query: {args.outgroup}")
+        else:
+            print("No outgroup query provided; tree will be left unrooted for downstream use.")
+
+    steps = build_step_plan(have_cds, use_clipkit)
+    total_steps = 1 + len(steps)
+    print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
-        print(f"\nStep {idx}/{len(steps)}: {step.rule}")
-        print(step.description)
-        existing = tuple((outdir / rel).exists() for rel in step.outputs)
-        can_skip = all(existing)
-        if can_skip:
-            print("All expected outputs for this step already exist.")
-        action = prompt_step_action(can_skip=can_skip)
-        if action == "stop":
-            print("Guided run stopped by user.")
-            return 130
-        if action == "skip":
-            print("Step skipped (existing outputs retained).")
-            print_step_outputs(outdir, step.outputs)
-            continue
-        code = run_snakemake_target(config_path, cores, step.rule, snake_args, snakefile)
+        code = run_guided_step(
+            config_path=config_path,
+            outdir=outdir,
+            cores=cores,
+            snake_args=snake_args,
+            snakefile=snakefile,
+            step=step,
+            index=idx + 1,
+            total=total_steps,
+        )
         if code != 0:
             return code
-        print_step_outputs(outdir, step.outputs)
     return 0
 
 
@@ -537,6 +653,7 @@ def main() -> None:
 
     if args.guided == "yes" and is_tty_interactive():
         rc = run_guided_pipeline(
+            args=args,
             config_path=config_path,
             outdir=outdir,
             cores=int(args.threads),

@@ -66,6 +66,8 @@ babappasnake
 ```
 
 This mode prompts for pipeline settings, executes one rule at a time, asks `run/skip/stop` at every step, and prints per-step output previews.
+It asks for CDS only after `rbh_orthogroup` finishes, then asks optional outgroup text for rooting.
+It also prints explicit orthogroup membership in terminal: groups included and groups omitted at RBH stage.
 
 ### Case A: you already have the CDS file
 
