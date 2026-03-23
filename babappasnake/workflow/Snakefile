@@ -82,6 +82,7 @@ if HAVE_CDS:
             cds=USER_CDS,
         output:
             mapped=OUTDIR / "mapped_cds" / "mapped_orthogroup_cds.fasta",
+            proteins=OUTDIR / "mapped_cds" / "mapped_orthogroup_proteins.fasta",
             table=OUTDIR / "mapped_cds" / "cds_protein_mapping.tsv",
         shell:
             r'''
@@ -90,13 +91,14 @@ if HAVE_CDS:
               --proteins {input.proteins} \
               --cds {input.cds} \
               --out-cds {output.mapped} \
+              --out-proteins {output.proteins} \
               --mapping {output.table}
             '''
 
 
     rule align_proteins:
         input:
-            rules.rbh_orthogroup.output.proteins
+            rules.map_cds.output.proteins
         output:
             aln=OUTDIR / "alignments" / "orthogroup_proteins.protein.aln.fasta"
         threads: THREADS

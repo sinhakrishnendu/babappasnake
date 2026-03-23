@@ -7,7 +7,7 @@ It is designed for practical use: one command to launch, automatic checkpointing
 
 1. Runs reciprocal best-hit (RBH) ortholog discovery.
 2. Builds an orthogroup from your query and proteomes.
-3. Maps user CDS records to orthogroup proteins.
+3. Maps user CDS records to orthogroup proteins (after lowercase intron clipping and uppercase ORF window extraction).
 4. Creates protein and codon alignments with `babappalign`.
 5. Trims alignments with ClipKIT (`kpic-smart-gap`).
 6. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
@@ -52,7 +52,9 @@ Notes:
 
 CDS quality checks (when `--cds` is supplied):
 - Lowercase intron characters are clipped from each CDS.
-- Only CDS with uppercase `ATG` start codon and uppercase terminal stop codon (`TAA`/`TAG`/`TGA`) are kept for mapping.
+- For each CDS, the best uppercase `ATG ... STOP` ORF window is retained.
+- CDS records that still fail ORF/start-stop/frame checks are excluded.
+- Proteins without a qualifying CDS match are skipped from codon/tree downstream analyses.
 
 ## Quick start
 
