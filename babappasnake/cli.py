@@ -474,6 +474,8 @@ def run_guided_step(
     step: StepSpec,
     index: int,
     total: int | None,
+    force_can_skip: bool = False,
+    on_skip: object | None = None,
 ) -> int:
     if total is None:
         print(f"\nStep {index}: {step.rule}")
@@ -481,14 +483,19 @@ def run_guided_step(
         print(f"\nStep {index}/{total}: {step.rule}")
     print(step.description)
     existing = tuple((outdir / rel).exists() for rel in step.outputs)
-    can_skip = all(existing)
+    can_skip = all(existing) or force_can_skip
     if can_skip:
-        print("All expected outputs for this step already exist.")
+        if all(existing):
+            print("All expected outputs for this step already exist.")
+        elif force_can_skip:
+            print("This step is skippable in the current context.")
     action = prompt_step_action(can_skip=can_skip)
     if action == "stop":
         print("Guided run stopped by user.")
         return 130
     if action == "skip":
+        if on_skip is not None:
+            on_skip()
         print("Step skipped (existing outputs retained).")
         print_step_outputs(outdir, step.outputs)
         return 0
@@ -566,6 +573,17 @@ def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
         yaml.safe_dump(cfg, fh, sort_keys=False)
 
 
+def stage_unrooted_tree_for_downstream(outdir: Path) -> None:
+    src = outdir / "tree" / "orthogroup.treefile"
+    dst = outdir / "tree" / "orthogroup.rooted.treefile"
+    if not src.exists():
+        print(f"Cannot stage unrooted tree fallback; missing: {src}")
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    print("Staged unrooted tree for downstream use (copied to orthogroup.rooted.treefile).")
+
+
 def run_guided_pipeline(
     args: argparse.Namespace,
     config_path: Path,
@@ -620,6 +638,12 @@ def run_guided_pipeline(
     total_steps = 1 + len(steps)
     print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
+        allow_skip = False
+        on_skip = None
+        if step.rule == "root_iqtree_outgroup" and not str(args.outgroup).strip():
+            allow_skip = True
+            on_skip = lambda: stage_unrooted_tree_for_downstream(outdir)
+            print("No outgroup provided: running this step or skipping it will both use the unrooted tree downstream.")
         code = run_guided_step(
             config_path=config_path,
             outdir=outdir,
@@ -629,6 +653,8 @@ def run_guided_pipeline(
             step=step,
             index=idx + 1,
             total=total_steps,
+            force_can_skip=allow_skip,
+            on_skip=on_skip,
         )
         if code != 0:
             return code
