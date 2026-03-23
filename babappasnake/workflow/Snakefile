@@ -6,6 +6,7 @@ PROTEOMES = config["proteomes_dir"]
 USER_CDS = Path(config["user_cds"])
 THREADS = int(config.get("threads", 4))
 COVERAGE = float(config.get("coverage", 0.70))
+OUTGROUP_QUERY = str(config.get("outgroup_query", "")).strip()
 ABSREL_P = float(config.get("absrel_p", 0.1))
 ABSREL_DYNAMIC_START = float(config.get("absrel_dynamic_start", 0.05))
 ABSREL_DYNAMIC_STEP = float(config.get("absrel_dynamic_step", 0.01))
@@ -183,11 +184,27 @@ if HAVE_CDS:
             test -f {output.tree}
             '''
 
+    rule root_iqtree_outgroup:
+        input:
+            tree=rules.iqtree_ml.output.tree
+        output:
+            rooted=OUTDIR / "tree" / "orthogroup.rooted.treefile"
+        params:
+            outgroup=OUTGROUP_QUERY
+        shell:
+            r'''
+            python -m babappasnake.scripts.root_tree_outgroup \
+              --tree {input.tree} \
+              --output {output.rooted} \
+              --outgroup {params.outgroup:q}
+            '''
+    ROOTED_TREE = rules.root_iqtree_outgroup.output.rooted
+
 
     rule codeml_asr:
         input:
             aln=TEST_CDS_ALN,
-            tree=rules.iqtree_ml.output.tree,
+            tree=ROOTED_TREE,
         output:
             done=OUTDIR / "asr" / "asr_done.json",
             mlc=OUTDIR / "asr" / "mlc_asr.txt",
@@ -209,7 +226,7 @@ if HAVE_CDS:
     rule hyphy_exploratory:
         input:
             aln=TEST_CDS_ALN,
-            tree=rules.iqtree_ml.output.tree,
+            tree=ROOTED_TREE,
         output:
             done=OUTDIR / "hyphy" / "hyphy_done.json",
             absrel=OUTDIR / "hyphy" / "absrel.json",
@@ -252,7 +269,7 @@ if HAVE_CDS:
 
     rule prepare_foreground_trees:
         input:
-            tree=rules.iqtree_ml.output.tree,
+            tree=ROOTED_TREE,
             lst=rules.parse_foregrounds.output.lst,
         output:
             manifest=OUTDIR / "branchsite" / "foreground_trees.tsv"

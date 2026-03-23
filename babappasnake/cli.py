@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--outdir", default="babappasnake_run", help="Output directory")
     p.add_argument("--coverage", type=float, default=0.70, help="RBH minimum reciprocal coverage [default: 0.70]")
     p.add_argument("--threads", type=int, default=4, help="Threads for external tools [default: 4]")
+    p.add_argument("--outgroup", default="", help="Outgroup label query used to root the IQ-TREE output (case-insensitive substring match)")
     p.add_argument("--absrel-p", type=float, default=0.1, help="Leaf-branch significance threshold for aBSREL [default: 0.1]")
     p.add_argument("--meme-p", type=float, default=0.1, help="MEME site threshold retained in summary [default: 0.1]")
     p.add_argument("--use-clipkit", choices=["yes", "no"], default="yes", help="Trim alignments with ClipKIT [default: yes]")
@@ -52,6 +53,7 @@ def write_config(args: argparse.Namespace, outdir: Path, executables: dict[str, 
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
         "coverage": float(args.coverage),
         "threads": int(args.threads),
+        "outgroup_query": str(args.outgroup).strip(),
         "absrel_p": float(args.absrel_p),
         "meme_p": float(args.meme_p),
         "use_clipkit": args.use_clipkit == "yes",

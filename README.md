@@ -12,11 +12,12 @@ It is designed for practical use: one command to launch, automatic checkpointing
 5. Trims alignments with ClipKIT (`kpic-smart-gap`).
 6. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
 7. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`).
-8. Runs HyPhy aBSREL and MEME on leaf branches (`--branches Leaves`).
-9. Selects foreground branches from aBSREL using dynamic thresholding.
-10. Runs branch-site `codeml` only for selected branches (alt and null models).
-11. Runs codeml ancestral sequence reconstruction (ASR).
-12. Produces final summary and tabular outputs.
+8. Roots the inferred tree using a user-supplied outgroup label query (case-insensitive header matching).
+9. Runs HyPhy aBSREL and MEME on leaf branches (`--branches Leaves`).
+10. Selects foreground branches from aBSREL using dynamic thresholding.
+11. Runs branch-site `codeml` only for selected branches (alt and null models).
+12. Runs codeml ancestral sequence reconstruction (ASR).
+13. Produces final summary and tabular outputs.
 
 ## Installation (for end users)
 
@@ -47,6 +48,11 @@ Notes:
 - `--prot`: directory containing proteome FASTA files.
 - `--query`: protein FASTA containing the query sequence.
 - `--cds` (optional at first run): CDS FASTA for the orthogroup.
+- `--outgroup`: outgroup query string used to root the IQ-TREE output (e.g., `culex` matches headers containing `culex`).
+
+CDS quality checks (when `--cds` is supplied):
+- Lowercase intron characters are clipped from each CDS.
+- Only CDS with uppercase `ATG` start codon and uppercase terminal stop codon (`TAA`/`TAG`/`TGA`) are kept for mapping.
 
 ## Quick start
 
@@ -57,6 +63,7 @@ babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
+  --outgroup culex \
   --outdir run01 \
   --threads 8
 ```
@@ -69,6 +76,7 @@ Run once:
 babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
+  --outgroup culex \
   --outdir run01 \
   --threads 8
 ```
@@ -110,7 +118,8 @@ Most important files:
 - `asr/asr_done.json`: ASR completion record.
 - `asr/mlc_asr.txt`: codeml ASR main output.
 - `asr/rst`: reconstructed ancestral states.
-- `tree/orthogroup.treefile`: inferred ML tree.
+- `tree/orthogroup.treefile`: inferred ML tree (unrooted IQ-TREE output).
+- `tree/orthogroup.rooted.treefile`: rooted tree used by HyPhy and codeml downstream steps.
 
 ## CLI reference
 
@@ -121,6 +130,7 @@ babappasnake --prot PROTEOMES_DIR --query QUERY_FASTA [options]
 Options:
 
 - `--cds PATH`: CDS FASTA (optional for initial run).
+- `--outgroup TEXT`: outgroup query used for tree rooting (case-insensitive substring match against tip headers).
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
 - `--threads INT`: parallel threads/cores (default: `4`).
@@ -136,6 +146,7 @@ babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
+  --outgroup culex \
   --outdir run01 \
   --threads 8 \
   --snake-args "--keep-going"
