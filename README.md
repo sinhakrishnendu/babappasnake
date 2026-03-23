@@ -2,6 +2,7 @@
 
 `babappasnake` is a command-line workflow for episodic positive selection analysis on a single orthogroup.
 It is designed for practical use: one command to launch, automatic checkpointing, resumable execution, and clear summary outputs.
+In terminal mode, it can run as an interactive guided engine instead of a black-box single-shot command.
 
 ## What the pipeline does
 
@@ -58,6 +59,14 @@ CDS quality checks (when `--cds` is supplied):
 
 ## Quick start
 
+### Guided interactive mode (default in terminal)
+
+```bash
+babappasnake
+```
+
+This mode prompts for pipeline settings, executes one rule at a time, asks `run/skip/stop` at every step, and prints per-step output previews.
+
 ### Case A: you already have the CDS file
 
 ```bash
@@ -67,7 +76,9 @@ babappasnake \
   --cds /path/to/orthogroup_cds.fasta \
   --outgroup culex \
   --outdir run01 \
-  --threads 8
+  --threads 8 \
+  --interactive no \
+  --guided no
 ```
 
 ### Case B: two-stage run (CDS provided later)
@@ -80,7 +91,9 @@ babappasnake \
   --query /path/to/query.fasta \
   --outgroup culex \
   --outdir run01 \
-  --threads 8
+  --threads 8 \
+  --interactive no \
+  --guided no
 ```
 
 The first run stops intentionally and writes:
@@ -136,10 +149,20 @@ Options:
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
 - `--threads INT`: parallel threads/cores (default: `4`).
+- `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).
+- `--iqtree-bnni {yes,no}`: enable/disable IQ-TREE `-bnni` (default: `no`).
+- `--iqtree-model TEXT`: IQ-TREE model string (default: `MFP`).
 - `--absrel-p FLOAT`: compatibility parameter retained in config (dynamic mode is used for branch selection).
+- `--absrel-dynamic-start FLOAT`: dynamic foreground start p-value (default: `0.05`).
+- `--absrel-dynamic-step FLOAT`: dynamic foreground increment (default: `0.01`).
+- `--absrel-dynamic-max FLOAT`: dynamic foreground max p-value (default: `1.0`).
 - `--meme-p FLOAT`: MEME reporting threshold in summary (default: `0.1`).
 - `--use-clipkit {yes,no}`: enable/disable ClipKIT (default: `yes`).
+- `--clipkit-mode-protein TEXT`: ClipKIT mode for protein trimming (default: `kpic-smart-gap`).
+- `--clipkit-mode-codon TEXT`: ClipKIT mode for codon trimming (default: `kpic-smart-gap`).
 - `--snake-args "..."`: extra raw arguments forwarded to Snakemake.
+- `--interactive {yes,no}`: prompt for settings at launch (default: `yes`).
+- `--guided {yes,no}`: execute one rule at a time with confirmation (default: `yes`).
 
 Example with additional Snakemake flags:
 

@@ -13,6 +13,11 @@ ABSREL_DYNAMIC_STEP = float(config.get("absrel_dynamic_step", 0.01))
 ABSREL_DYNAMIC_MAX = float(config.get("absrel_dynamic_max", 1.0))
 MEME_P = float(config.get("meme_p", 0.1))
 USE_CLIPKIT = bool(config.get("use_clipkit", True))
+CLIPKIT_MODE_PROTEIN = str(config.get("clipkit_mode_protein", "kpic-smart-gap")).strip() or "kpic-smart-gap"
+CLIPKIT_MODE_CODON = str(config.get("clipkit_mode_codon", "kpic-smart-gap")).strip() or "kpic-smart-gap"
+IQTREE_MODEL = str(config.get("iqtree_model", "MFP")).strip() or "MFP"
+IQTREE_BOOTSTRAP = int(config.get("iqtree_bootstrap", 1000))
+IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 EXE = config.get("executables", {})
 BLASTP = EXE["blastp"]
 MAKEBLASTDB = EXE["makeblastdb"]
@@ -139,7 +144,7 @@ if HAVE_CDS:
             shell:
                 r'''
                 mkdir -p {OUTDIR}/trimmed
-                "{CLIPKIT}" {input} -m kpic-smart-gap -s aa -o {output.trimmed}
+                "{CLIPKIT}" {input} -m {CLIPKIT_MODE_PROTEIN:q} -s aa -o {output.trimmed}
                 '''
 
 
@@ -151,7 +156,7 @@ if HAVE_CDS:
             shell:
                 r'''
                 mkdir -p {OUTDIR}/trimmed
-                "{CLIPKIT}" {input} -m kpic-smart-gap --codon -o {output.trimmed}
+                "{CLIPKIT}" {input} -m {CLIPKIT_MODE_CODON:q} --codon -o {output.trimmed}
                 '''
 
 
@@ -179,10 +184,12 @@ if HAVE_CDS:
         output:
             tree=OUTDIR / "tree" / "orthogroup.treefile"
         threads: THREADS
+        params:
+            bnni="-bnni" if IQTREE_BNNI else ""
         shell:
             r'''
             mkdir -p {OUTDIR}/tree
-            "{IQTREE}" -s {input} -nt {threads} -m MFP -B 1000 -redo -pre {OUTDIR}/tree/orthogroup
+            "{IQTREE}" -s {input} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/orthogroup
             test -f {output.tree}
             '''
 

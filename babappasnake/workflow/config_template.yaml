@@ -1,2 +1,11 @@
 outdir: babappasnake_run
 outgroup_query: ""
+iqtree_model: "MFP"
+iqtree_bootstrap: 1000
+iqtree_bnni: false
+use_clipkit: true
+clipkit_mode_protein: "kpic-smart-gap"
+clipkit_mode_codon: "kpic-smart-gap"
+absrel_dynamic_start: 0.05
+absrel_dynamic_step: 0.01
+absrel_dynamic_max: 1.0
