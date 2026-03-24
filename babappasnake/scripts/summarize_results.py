@@ -54,7 +54,7 @@ def main() -> None:
     p.add_argument("--hyphy-dir", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--method", default="")
-    p.add_argument("--meme-p", type=float, default=0.1)
+    p.add_argument("--meme-p", type=float, default=0.05)
     a = p.parse_args()
 
     rbh = read_tsv(a.rbh)
@@ -62,7 +62,7 @@ def main() -> None:
     absrel = read_tsv(a.absrel)
     branchsite = read_tsv(a.branchsite)
     hyphy_dir = Path(a.hyphy_dir)
-    absrel_cutoff = 0.1
+    absrel_cutoff = 0.05
     if a.absrel_meta:
         mp = Path(a.absrel_meta)
         if mp.exists() and mp.stat().st_size > 0:

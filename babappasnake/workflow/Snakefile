@@ -7,11 +7,11 @@ USER_CDS = Path(config["user_cds"])
 THREADS = int(config.get("threads", 4))
 COVERAGE = float(config.get("coverage", 0.70))
 OUTGROUP_QUERY = str(config.get("outgroup_query", "")).strip()
-ABSREL_P = float(config.get("absrel_p", 0.1))
+ABSREL_P = float(config.get("absrel_p", 0.05))
 ABSREL_DYNAMIC_START = float(config.get("absrel_dynamic_start", 0.05))
 ABSREL_DYNAMIC_STEP = float(config.get("absrel_dynamic_step", 0.01))
-ABSREL_DYNAMIC_MAX = float(config.get("absrel_dynamic_max", 1.0))
-MEME_P = float(config.get("meme_p", 0.1))
+ABSREL_DYNAMIC_MAX = float(config.get("absrel_dynamic_max", 0.2))
+MEME_P = float(config.get("meme_p", 0.05))
 USE_CLIPKIT = bool(config.get("use_clipkit", True))
 CLIPKIT_MODE_PROTEIN = str(config.get("clipkit_mode_protein", "kpic-smart-gap")).strip() or "kpic-smart-gap"
 CLIPKIT_MODE_CODON = str(config.get("clipkit_mode_codon", "kpic-smart-gap")).strip() or "kpic-smart-gap"
@@ -20,7 +20,7 @@ IQTREE_BOOTSTRAP = int(config.get("iqtree_bootstrap", 1000))
 IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
-CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 2))
+CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
 
 SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
 

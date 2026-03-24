@@ -134,7 +134,7 @@ Foreground selection from aBSREL uses dynamic p-thresholding:
 - start at `p <= 0.05`
 - if no branch passes, increase by `0.01`
 - stop as soon as at least one branch is found
-- hard upper bound: `1.0`
+- hard upper bound: `0.2`
 
 Only those selected branches go to branch-site `codeml`.
 Each selected branch runs two codeml fits (alternative + null), then BH-FDR correction is applied.
@@ -174,12 +174,12 @@ Options:
 - `--iqtree-model TEXT`: IQ-TREE model string (default: `MFP`).
 - `--absrel-branches TEXT`: HyPhy aBSREL branch selector (default: `Leaves`; common choices: `Leaves`, `Internal`, `All`).
 - `--meme-branches TEXT`: HyPhy MEME branch selector (default: `Leaves`; common choices: `Leaves`, `Internal`, `All`).
-- `--codeml-codonfreq INT`: codeml `CodonFreq` value for branch-site and ASR runs (default: `2`; e.g. `1`, `2`, `7`).
-- `--absrel-p FLOAT`: compatibility parameter retained in config (dynamic mode is used for branch selection).
+- `--codeml-codonfreq INT`: codeml `CodonFreq` value for branch-site and ASR runs (default: `7`; e.g. `1`, `2`, `7`).
+- `--absrel-p FLOAT`: compatibility parameter retained in config (default: `0.05`; dynamic mode is used for branch selection).
 - `--absrel-dynamic-start FLOAT`: dynamic foreground start p-value (default: `0.05`).
 - `--absrel-dynamic-step FLOAT`: dynamic foreground increment (default: `0.01`).
-- `--absrel-dynamic-max FLOAT`: dynamic foreground max p-value (default: `1.0`).
-- `--meme-p FLOAT`: MEME reporting threshold in summary (default: `0.1`).
+- `--absrel-dynamic-max FLOAT`: dynamic foreground max p-value (default: `0.2`).
+- `--meme-p FLOAT`: MEME reporting threshold in summary (default: `0.05`).
 - `--use-clipkit {yes,no}`: enable/disable ClipKIT (default: `yes`).
 - `--clipkit-mode-protein TEXT`: ClipKIT mode for protein trimming (default: `kpic-smart-gap`).
 - `--clipkit-mode-codon TEXT`: ClipKIT mode for codon trimming (default: `kpic-smart-gap`).

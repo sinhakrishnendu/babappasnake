@@ -25,11 +25,11 @@ def extract_absrel_leaf_hits(data: dict, pcut: float) -> list[tuple[str, float]]
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--absrel-json", required=True)
-    p.add_argument("--pcut", type=float, default=0.1)
+    p.add_argument("--pcut", type=float, default=0.05)
     p.add_argument("--dynamic", action="store_true", help="Use dynamic thresholding: start at --dynamic-start and increase by --dynamic-step until at least one hit is found (or max reached).")
     p.add_argument("--dynamic-start", type=float, default=0.05)
     p.add_argument("--dynamic-step", type=float, default=0.01)
-    p.add_argument("--dynamic-max", type=float, default=1.0)
+    p.add_argument("--dynamic-max", type=float, default=0.2)
     p.add_argument("--out-tsv", required=True)
     p.add_argument("--out-list", required=True)
     p.add_argument("--out-meta", required=False)

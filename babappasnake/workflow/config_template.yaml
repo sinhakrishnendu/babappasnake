@@ -10,10 +10,12 @@ iqtree_bootstrap: 1000
 iqtree_bnni: false
 absrel_branches: "Leaves"
 meme_branches: "Leaves"
-codeml_codonfreq: 2
+codeml_codonfreq: 7
 use_clipkit: true
 clipkit_mode_protein: "kpic-smart-gap"
 clipkit_mode_codon: "kpic-smart-gap"
 absrel_dynamic_start: 0.05
 absrel_dynamic_step: 0.01
-absrel_dynamic_max: 1.0
+absrel_dynamic_max: 0.2
+absrel_p: 0.05
+meme_p: 0.05
