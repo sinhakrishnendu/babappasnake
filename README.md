@@ -9,16 +9,17 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 1. Runs reciprocal best-hit (RBH) ortholog discovery.
 2. Builds an orthogroup from your query and proteomes.
 3. Maps user CDS records to orthogroup proteins (after lowercase intron clipping and uppercase ORF window extraction).
-4. Creates protein and codon alignments with `babappalign`.
-5. Trims alignments with ClipKIT (`kpic-smart-gap`).
-6. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
-7. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`).
-8. Roots the inferred tree using a user-supplied outgroup label query (case-insensitive header matching).
-9. Runs HyPhy aBSREL and MEME with user-selected branch scopes (default `Leaves`).
-10. Selects foreground branches from aBSREL using dynamic thresholding.
-11. Runs branch-site `codeml` only for selected branches (alt and null models).
-12. Runs codeml ancestral sequence reconstruction (ASR).
-13. Produces final summary and tabular outputs.
+4. Creates protein and codon alignments for selected engines (`babappalign`, `mafft`, `prank`).
+5. For `mafft`/`prank`, protein alignments are converted to codon alignments with `pal2nal`.
+6. Trims alignments with ClipKIT (`kpic-smart-gap`).
+7. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
+8. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`).
+9. Roots inferred trees using a user-supplied outgroup label query (case-insensitive header matching).
+10. Runs HyPhy aBSREL and MEME with user-selected branch scopes (default `Leaves`).
+11. Selects foreground branches from aBSREL using dynamic thresholding.
+12. Runs branch-site `codeml` only for selected branches (alt and null models).
+13. Runs codeml ancestral sequence reconstruction (ASR).
+14. Produces per-method summaries and a comparative reproducibility summary across selected alignment engines.
 
 ## Installation (for end users)
 
@@ -33,11 +34,18 @@ conda activate babappasnake
 pip install babappalign babappasnake
 ```
 
+Optional (only if you select those pathways):
+
+```bash
+conda install -c conda-forge -c bioconda mafft prank pal2nal
+```
+
 ### Quick verification
 
 ```bash
 babappasnake --help
-which blastp makeblastdb hyphy codeml clipkit babappalign
+which blastp makeblastdb hyphy codeml clipkit
+which babappalign mafft prank pal2nal.pl
 ```
 
 Notes:
@@ -50,6 +58,7 @@ Notes:
 - `--query`: protein FASTA containing the query sequence.
 - `--cds` (optional at first run): CDS FASTA for the orthogroup.
 - `--outgroup`: outgroup query string used to root the IQ-TREE output (e.g., `culex` matches headers containing `culex`).
+- `--alignment-methods`: choose one or more alignment engines from `babappalign,mafft,prank`.
 
 CDS quality checks (when `--cds` is supplied):
 - Lowercase intron characters are clipped from each CDS.
@@ -68,7 +77,8 @@ babappasnake
 This mode prompts for pipeline settings, executes one rule at a time, asks `run/skip/stop` at every step, and prints per-step output previews.
 It asks for CDS only after `rbh_orthogroup` finishes, then asks optional outgroup text for rooting.
 It also prints explicit orthogroup membership in terminal: groups included and groups omitted at RBH stage.
-If outgroup is left empty, `root_iqtree_outgroup` is safely skippable in guided mode and downstream uses the unrooted IQ-TREE output.
+If outgroup is left empty, rooting is safely skippable in guided mode and downstream uses unrooted IQ-TREE trees.
+You can choose any one method or any combination of `babappalign`, `mafft`, and `prank`; downstream runs only for selected methods.
 
 ### Case A: you already have the CDS file
 
@@ -77,6 +87,7 @@ babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
+  --alignment-methods babappalign,mafft,prank \
   --outgroup culex \
   --outdir run01 \
   --threads 8 \
@@ -129,15 +140,15 @@ All outputs are written under `--outdir` (default: `babappasnake_run`).
 
 Most important files:
 
-- `summary/episodic_selection_summary.txt`: human-readable final report.
-- `hyphy/foreground_threshold.json`: selected dynamic threshold and hit count.
-- `hyphy/significant_foregrounds.tsv`: selected aBSREL foreground branches.
-- `branchsite/branchsite_results.tsv`: codeml branch-site statistics and BH significance.
-- `asr/asr_done.json`: ASR completion record.
-- `asr/mlc_asr.txt`: codeml ASR main output.
-- `asr/rst`: reconstructed ancestral states.
-- `tree/orthogroup.treefile`: inferred ML tree (unrooted IQ-TREE output).
-- `tree/orthogroup.rooted.treefile`: rooted tree used by HyPhy and codeml downstream steps.
+- `summary/episodic_selection_summary.txt`: top-level summary alias (primary selected method).
+- `summary/<method>/episodic_selection_summary.txt`: method-specific final reports.
+- `summary/comparative_reproducibility_summary.txt`: cross-method reproducibility comparison.
+- `hyphy/<method>/foreground_threshold.json`: selected dynamic threshold and hit count.
+- `hyphy/<method>/significant_foregrounds.tsv`: selected aBSREL foreground branches.
+- `branchsite/<method>/branchsite_results.tsv`: codeml branch-site statistics and BH significance.
+- `asr/<method>/asr_done.json`: ASR completion record.
+- `tree/<method>/orthogroup.treefile`: method-specific inferred ML tree (unrooted IQ-TREE output).
+- `tree/<method>/orthogroup.rooted.treefile`: method-specific rooted tree used downstream.
 
 ## CLI reference
 
@@ -150,6 +161,7 @@ Options:
 - `--cds PATH`: CDS FASTA (optional for initial run).
 - `--outgroup TEXT`: outgroup query used for tree rooting (case-insensitive substring match against tip headers).
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
+- `--alignment-methods TEXT`: comma-separated method selection from `babappalign,mafft,prank` (choose one, two, all three, or `all`; default: `babappalign`).
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
 - `--threads INT`: parallel threads/cores (default: `4`).
 - `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).

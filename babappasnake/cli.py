@@ -31,6 +31,7 @@ CLIPKIT_MODE_CHOICES = (
     "relaxed",
 )
 HYPHY_BRANCH_CHOICES = ("Leaves", "Internal", "All")
+SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,50 @@ def prompt_codonfreq(default: int) -> int:
         print("Invalid selection.")
 
 
+def parse_alignment_methods(raw: object) -> list[str]:
+    if isinstance(raw, str):
+        tokens = [token.strip().lower() for token in raw.split(",") if token.strip()]
+    elif isinstance(raw, (list, tuple)):
+        tokens = [str(token).strip().lower() for token in raw if str(token).strip()]
+    else:
+        tokens = []
+
+    if not tokens:
+        tokens = ["babappalign"]
+    if any(token == "all" for token in tokens):
+        tokens = list(SUPPORTED_ALIGNMENT_METHODS)
+
+    normalized: list[str] = []
+    seen = set()
+    for token in tokens:
+        if token not in SUPPORTED_ALIGNMENT_METHODS:
+            raise SystemExit(
+                f"Unsupported alignment method '{token}'. "
+                f"Choose from: {', '.join(SUPPORTED_ALIGNMENT_METHODS)}"
+            )
+        if token not in seen:
+            seen.add(token)
+            normalized.append(token)
+    return normalized
+
+
+def validate_selected_alignment_tools(methods: list[str], resolved_tools: dict[str, str]) -> None:
+    missing: list[str] = []
+    if "babappalign" in methods and "babappalign" not in resolved_tools:
+        missing.append("babappalign")
+    if "mafft" in methods and "mafft" not in resolved_tools:
+        missing.append("mafft")
+    if "prank" in methods and "prank" not in resolved_tools:
+        missing.append("prank")
+    if any(method in {"mafft", "prank"} for method in methods) and "pal2nal" not in resolved_tools:
+        missing.append("pal2nal")
+    if missing:
+        raise SystemExit(
+            "Selected alignment methods require additional tools not found on PATH: "
+            + ", ".join(missing)
+        )
+
+
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if args.interactive == "no":
         return args
@@ -194,6 +239,13 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
     args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
+    methods_default = ",".join(parse_alignment_methods(args.alignment_methods))
+    args.alignment_methods = prompt_text(
+        "Alignment methods (--alignment-methods; comma-separated from babappalign,mafft,prank)",
+        methods_default,
+        required=True,
+    )
+    args.alignment_methods = ",".join(parse_alignment_methods(args.alignment_methods))
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Threads (--threads)", int(args.threads))
     args.use_clipkit = "yes" if prompt_yes_no("Use ClipKIT?", args.use_clipkit == "yes") else "no"
@@ -241,6 +293,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
+    print(f"- alignment_methods: {args.alignment_methods}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
     print(f"- use_clipkit: {args.use_clipkit}")
@@ -271,6 +324,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--query", default=None, help="Path to protein query FASTA")
     p.add_argument("--cds", default=None, help="Optional CDS FASTA for the orthogroup")
     p.add_argument("--outdir", default="babappasnake_run", help="Output directory")
+    p.add_argument(
+        "--alignment-methods",
+        default="babappalign",
+        help="Comma-separated alignment engines to run (choose any of: babappalign,mafft,prank) [default: babappalign]",
+    )
     p.add_argument("--coverage", type=float, default=0.70, help="RBH minimum reciprocal coverage [default: 0.70]")
     p.add_argument("--threads", type=int, default=4, help="Threads for external tools [default: 4]")
     p.add_argument("--outgroup", default="", help="Outgroup label query used to root the IQ-TREE output (case-insensitive substring match)")
@@ -313,6 +371,7 @@ def validate_inputs(args: argparse.Namespace) -> None:
         cds_path = Path(args.cds)
         if not cds_path.is_file():
             raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
+    parse_alignment_methods(args.alignment_methods)
 
 
 def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
@@ -331,11 +390,13 @@ def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
 
 
 def write_config(args: argparse.Namespace, outdir: Path, executables: dict[str, str]) -> Path:
+    methods = parse_alignment_methods(args.alignment_methods)
     cfg = {
         "outdir": str(outdir.resolve()),
         "query_fasta": str((outdir / "inputs" / "query.fasta").resolve()),
         "proteomes_dir": str((outdir / "inputs" / "proteomes").resolve()),
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
+        "alignment_methods": methods,
         "coverage": float(args.coverage),
         "threads": int(args.threads),
         "outgroup_query": str(args.outgroup).strip(),
@@ -390,7 +451,7 @@ def run_snakemake_target(config_path: Path, cores: int, target: str, snake_args:
     return result.returncode
 
 
-def build_step_plan(have_cds: bool, use_clipkit: bool) -> list[StepSpec]:
+def build_step_plan(have_cds: bool, use_clipkit: bool, methods: list[str]) -> list[StepSpec]:
     if not have_cds:
         return [
             StepSpec(
@@ -411,80 +472,92 @@ def build_step_plan(have_cds: bool, use_clipkit: bool) -> list[StepSpec]:
             ),
         ),
         StepSpec(
-            "align_proteins",
-            "Generate protein alignment.",
-            ("alignments/orthogroup_proteins.protein.aln.fasta",),
+            "align_proteins_all_methods",
+            "Generate protein alignments for selected methods.",
+            tuple(f"alignments/{method}/orthogroup_proteins.protein.aln.fasta" for method in methods),
         ),
         StepSpec(
-            "align_cds",
-            "Generate codon alignment.",
-            (
-                "alignments/mapped_orthogroup_cds.protein.aln.fasta",
-                "alignments/mapped_orthogroup_cds.codon.aln.fasta",
-            ),
+            "align_cds_all_methods",
+            "Generate codon alignments for selected methods.",
+            tuple(f"alignments/{method}/mapped_orthogroup_cds.codon.aln.fasta" for method in methods),
         ),
     ]
     if use_clipkit:
         steps.extend(
             [
                 StepSpec(
-                    "trim_protein_alignment",
-                    "Trim protein alignment with ClipKIT.",
-                    ("trimmed/orthogroup_proteins.clipkit.fasta",),
+                    "trim_protein_alignment_all_methods",
+                    "Trim protein alignments with ClipKIT.",
+                    tuple(f"trimmed/{method}/orthogroup_proteins.clipkit.fasta" for method in methods),
                 ),
                 StepSpec(
-                    "trim_codon_alignment",
-                    "Trim codon alignment with ClipKIT.",
-                    ("trimmed/mapped_orthogroup_cds.clipkit.fasta",),
+                    "trim_codon_alignment_all_methods",
+                    "Trim codon alignments with ClipKIT.",
+                    tuple(f"trimmed/{method}/mapped_orthogroup_cds.clipkit.fasta" for method in methods),
                 ),
                 StepSpec(
-                    "strip_terminal_stop_codon",
-                    "Remove terminal stop codons from trimmed codon alignment.",
-                    ("trimmed/mapped_orthogroup_cds.clipkit.nostop.fasta",),
+                    "strip_terminal_stop_codon_all_methods",
+                    "Remove terminal stop codons from trimmed codon alignments.",
+                    tuple(f"trimmed/{method}/mapped_orthogroup_cds.clipkit.nostop.fasta" for method in methods),
                 ),
             ]
         )
     steps.extend(
         [
-            StepSpec("iqtree_ml", "Infer ML phylogeny with IQ-TREE.", ("tree/orthogroup.treefile",)),
             StepSpec(
-                "root_iqtree_outgroup",
-                "Root the tree using the outgroup query.",
-                ("tree/orthogroup.rooted.treefile",),
+                "iqtree_ml_all_methods",
+                "Infer ML phylogeny with IQ-TREE for selected methods.",
+                tuple(f"tree/{method}/orthogroup.treefile" for method in methods),
             ),
             StepSpec(
-                "hyphy_exploratory",
-                "Run HyPhy aBSREL + MEME exploratory tests.",
-                ("hyphy/hyphy_done.json", "hyphy/absrel.json", "hyphy/meme.json"),
+                "root_iqtree_outgroup_all_methods",
+                "Root method-specific trees using the outgroup query.",
+                tuple(f"tree/{method}/orthogroup.rooted.treefile" for method in methods),
             ),
             StepSpec(
-                "parse_foregrounds",
-                "Select significant foreground branches.",
-                (
-                    "hyphy/significant_foregrounds.tsv",
-                    "hyphy/significant_foregrounds.txt",
-                    "hyphy/foreground_threshold.json",
-                ),
+                "hyphy_exploratory_all_methods",
+                "Run HyPhy aBSREL + MEME exploratory tests for selected methods.",
+                tuple(f"hyphy/{method}/hyphy_done.json" for method in methods),
             ),
             StepSpec(
-                "prepare_foreground_trees",
-                "Prepare branch-labeled trees for branch-site codeml.",
-                ("branchsite/foreground_trees.tsv",),
+                "parse_foregrounds_all_methods",
+                "Select significant foreground branches for selected methods.",
+                tuple(f"hyphy/{method}/significant_foregrounds.tsv" for method in methods),
             ),
             StepSpec(
-                "branchsite_batch",
-                "Run branch-site codeml across selected foregrounds.",
-                ("branchsite/branchsite_results.tsv",),
+                "prepare_foreground_trees_all_methods",
+                "Prepare branch-labeled trees for branch-site codeml (all methods).",
+                tuple(f"branchsite/{method}/foreground_trees.tsv" for method in methods),
             ),
             StepSpec(
-                "codeml_asr",
-                "Run codeml ancestral sequence reconstruction.",
-                ("asr/asr_done.json", "asr/mlc_asr.txt", "asr/rst"),
+                "branchsite_batch_all_methods",
+                "Run branch-site codeml across selected foregrounds (all methods).",
+                tuple(f"branchsite/{method}/branchsite_results.tsv" for method in methods),
             ),
             StepSpec(
-                "final_summary",
-                "Write final episodic selection summary.",
+                "codeml_asr_all_methods",
+                "Run codeml ancestral sequence reconstruction for selected methods.",
+                tuple(f"asr/{method}/asr_done.json" for method in methods),
+            ),
+            StepSpec(
+                "final_summary_all_methods",
+                "Write method-specific episodic selection summaries.",
+                tuple(f"summary/{method}/episodic_selection_summary.txt" for method in methods),
+            ),
+            StepSpec(
+                "final_summary_primary_alias",
+                "Write legacy top-level final summary alias.",
                 ("summary/episodic_selection_summary.txt",),
+            ),
+            StepSpec(
+                "asr_primary_alias",
+                "Write legacy top-level ASR completion alias.",
+                ("asr/asr_done.json",),
+            ),
+            StepSpec(
+                "compare_alignment_methods",
+                "Write comparative reproducibility summary across alignment methods.",
+                ("summary/comparative_reproducibility_summary.txt",),
             ),
         ]
     )
@@ -635,15 +708,18 @@ def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
         yaml.safe_dump(cfg, fh, sort_keys=False)
 
 
-def stage_unrooted_tree_for_downstream(outdir: Path) -> None:
-    src = outdir / "tree" / "orthogroup.treefile"
-    dst = outdir / "tree" / "orthogroup.rooted.treefile"
-    if not src.exists():
-        print(f"Cannot stage unrooted tree fallback; missing: {src}")
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    print("Staged unrooted tree for downstream use (copied to orthogroup.rooted.treefile).")
+def stage_unrooted_tree_for_downstream(outdir: Path, methods: list[str]) -> None:
+    staged = 0
+    for method in methods:
+        src = outdir / "tree" / method / "orthogroup.treefile"
+        dst = outdir / "tree" / method / "orthogroup.rooted.treefile"
+        if not src.exists():
+            print(f"Cannot stage unrooted tree fallback for {method}; missing: {src}")
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        staged += 1
+    print(f"Staged unrooted tree fallback for {staged} method(s).")
 
 
 def run_guided_pipeline(
@@ -655,6 +731,7 @@ def run_guided_pipeline(
     snake_args: str,
     snakefile: Path,
 ) -> int:
+    methods = parse_alignment_methods(args.alignment_methods)
     rbh_step = StepSpec(
         "rbh_orthogroup",
         "Build orthogroup proteins and RBH mapping.",
@@ -696,15 +773,15 @@ def run_guided_pipeline(
         else:
             print("No outgroup query provided; tree will be left unrooted for downstream use.")
 
-    steps = build_step_plan(have_cds, use_clipkit)
+    steps = build_step_plan(have_cds, use_clipkit, methods)
     total_steps = 1 + len(steps)
     print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
         allow_skip = False
         on_skip = None
-        if step.rule == "root_iqtree_outgroup" and not str(args.outgroup).strip():
+        if step.rule == "root_iqtree_outgroup_all_methods" and not str(args.outgroup).strip():
             allow_skip = True
-            on_skip = lambda: stage_unrooted_tree_for_downstream(outdir)
+            on_skip = lambda: stage_unrooted_tree_for_downstream(outdir, methods)
             print("No outgroup provided: running this step or skipping it will both use the unrooted tree downstream.")
         code = run_guided_step(
             config_path=config_path,
@@ -727,11 +804,14 @@ def main() -> None:
     args = parse_args()
     args = maybe_prompt_interactive(args)
     validate_inputs(args)
+    methods = parse_alignment_methods(args.alignment_methods)
+    args.alignment_methods = ",".join(methods)
 
     resolved, missing = resolve_tools()
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
+    validate_selected_alignment_tools(methods, resolved)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)

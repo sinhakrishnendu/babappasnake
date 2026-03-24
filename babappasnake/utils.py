@@ -20,7 +20,10 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("hyphy", ("hyphy",), True, "conda install -c conda-forge -c bioconda hyphy"),
     ToolSpec("codeml", ("codeml",), True, "conda install -c conda-forge -c bioconda paml"),
     ToolSpec("clipkit", ("clipkit",), True, "conda install -c conda-forge -c bioconda clipkit"),
-    ToolSpec("babappalign", ("babappalign",), True, "pip install babappalign"),
+    ToolSpec("babappalign", ("babappalign",), False, "pip install babappalign"),
+    ToolSpec("mafft", ("mafft",), False, "conda install -c conda-forge -c bioconda mafft"),
+    ToolSpec("prank", ("prank",), False, "conda install -c conda-forge -c bioconda prank"),
+    ToolSpec("pal2nal", ("pal2nal.pl", "pal2nal"), False, "conda install -c conda-forge -c bioconda pal2nal"),
 )
 
 

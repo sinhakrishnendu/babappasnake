@@ -53,6 +53,7 @@ def main() -> None:
     p.add_argument("--branchsite", required=True)
     p.add_argument("--hyphy-dir", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--method", default="")
     p.add_argument("--meme-p", type=float, default=0.1)
     a = p.parse_args()
 
@@ -69,7 +70,10 @@ def main() -> None:
             absrel_cutoff = float(meta.get("selected_pcut", absrel_cutoff))
 
     lines = []
-    lines.append("BABAPPASNAKE EPISODIC SELECTION SUMMARY")
+    header = "BABAPPASNAKE EPISODIC SELECTION SUMMARY"
+    if a.method:
+        header += f" [{a.method}]"
+    lines.append(header)
     lines.append("=" * 42)
     lines.append("")
     lines.append(f"Orthogroup members recovered by RBH: {sum(1 for x in rbh if x.get('ortholog') not in {None, '', 'NA'}) + 1}")

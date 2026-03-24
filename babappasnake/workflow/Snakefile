@@ -21,6 +21,50 @@ IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
 CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 2))
+
+SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
+
+
+def _normalize_alignment_methods(raw):
+    if isinstance(raw, str):
+        methods = [token.strip().lower() for token in raw.split(",") if token.strip()]
+    elif isinstance(raw, list):
+        methods = [str(token).strip().lower() for token in raw if str(token).strip()]
+    else:
+        methods = []
+
+    if not methods:
+        methods = ["babappalign"]
+
+    normalized = []
+    seen = set()
+    unknown = []
+    for method in methods:
+        if method not in SUPPORTED_ALIGNMENT_METHODS:
+            unknown.append(method)
+            continue
+        if method not in seen:
+            seen.add(method)
+            normalized.append(method)
+
+    if unknown:
+        raise ValueError(
+            f"Unsupported alignment methods in config: {', '.join(unknown)}. "
+            f"Supported: {', '.join(SUPPORTED_ALIGNMENT_METHODS)}"
+        )
+
+    if not normalized:
+        raise ValueError("No valid alignment methods configured.")
+
+    return normalized
+
+
+ALIGNMENT_METHODS = _normalize_alignment_methods(config.get("alignment_methods", ["babappalign"]))
+METHOD_PATTERN = "|".join(ALIGNMENT_METHODS)
+PAL2NAL_METHODS = [method for method in ALIGNMENT_METHODS if method in {"mafft", "prank"}]
+PAL2NAL_PATTERN = "|".join(PAL2NAL_METHODS)
+PRIMARY_METHOD = ALIGNMENT_METHODS[0]
+
 EXE = config.get("executables", {})
 BLASTP = EXE["blastp"]
 MAKEBLASTDB = EXE["makeblastdb"]
@@ -28,14 +72,20 @@ IQTREE = EXE["iqtree"]
 HYPHY = EXE["hyphy"]
 CODEML = EXE["codeml"]
 CLIPKIT = EXE["clipkit"]
-BABAPPALIGN = EXE["babappalign"]
+BABAPPALIGN = EXE.get("babappalign", "babappalign")
+MAFFT = EXE.get("mafft", "mafft")
+PRANK = EXE.get("prank", "prank")
+PAL2NAL = EXE.get("pal2nal", "pal2nal")
 
 HAVE_CDS = USER_CDS.exists() and USER_CDS.stat().st_size > 0
 
 if HAVE_CDS:
     rule all:
         input:
+            expand(OUTDIR / "summary" / "{method}" / "episodic_selection_summary.txt", method=ALIGNMENT_METHODS),
+            OUTDIR / "summary" / "comparative_reproducibility_summary.txt",
             OUTDIR / "summary" / "episodic_selection_summary.txt",
+            expand(OUTDIR / "asr" / "{method}" / "asr_done.json", method=ALIGNMENT_METHODS),
             OUTDIR / "asr" / "asr_done.json"
 else:
     rule all:
@@ -104,103 +154,204 @@ if HAVE_CDS:
             '''
 
 
-    rule align_proteins:
-        input:
-            rules.map_cds.output.proteins
-        output:
-            aln=OUTDIR / "alignments" / "orthogroup_proteins.protein.aln.fasta"
-        threads: THREADS
-        shell:
-            r'''
-            mkdir -p {OUTDIR}/alignments
-            cp {input} {OUTDIR}/alignments/orthogroup_proteins.fasta
-            cd {OUTDIR}/alignments && \
-            "{BABAPPALIGN}" orthogroup_proteins.fasta --model babappascore --mode protein
-            test -f {output.aln}
-            '''
+    if "babappalign" in ALIGNMENT_METHODS:
+        rule align_proteins_babappalign:
+            input:
+                rules.map_cds.output.proteins
+            output:
+                aln=OUTDIR / "alignments" / "babappalign" / "orthogroup_proteins.protein.aln.fasta"
+            threads: THREADS
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/alignments/babappalign
+                cp {input} {OUTDIR}/alignments/babappalign/orthogroup_proteins.fasta
+                cd {OUTDIR}/alignments/babappalign && \
+                "{BABAPPALIGN}" orthogroup_proteins.fasta --model babappascore --mode protein
+                test -f {output.aln}
+                '''
 
 
-    rule align_cds:
+        rule align_cds_babappalign:
+            input:
+                rules.map_cds.output.mapped
+            output:
+                protein_aln=OUTDIR / "alignments" / "babappalign" / "mapped_orthogroup_cds.protein.aln.fasta",
+                codon_aln=OUTDIR / "alignments" / "babappalign" / "mapped_orthogroup_cds.codon.aln.fasta"
+            threads: THREADS
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/alignments/babappalign
+                cp {input} {OUTDIR}/alignments/babappalign/mapped_orthogroup_cds.fasta
+                cd {OUTDIR}/alignments/babappalign && \
+                "{BABAPPALIGN}" mapped_orthogroup_cds.fasta --model babappascore --mode codon
+                test -f {output.protein_aln}
+                test -f {output.codon_aln}
+                '''
+
+
+    if "mafft" in ALIGNMENT_METHODS:
+        rule align_proteins_mafft:
+            input:
+                rules.map_cds.output.proteins
+            output:
+                aln=OUTDIR / "alignments" / "mafft" / "orthogroup_proteins.protein.aln.fasta"
+            threads: THREADS
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/alignments/mafft
+                "{MAFFT}" --auto --thread {threads} {input} > {output.aln}
+                test -s {output.aln}
+                '''
+
+
+    if "prank" in ALIGNMENT_METHODS:
+        rule align_proteins_prank:
+            input:
+                rules.map_cds.output.proteins
+            output:
+                aln=OUTDIR / "alignments" / "prank" / "orthogroup_proteins.protein.aln.fasta"
+            threads: THREADS
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/alignments/prank
+                "{PRANK}" -d={input} -o={OUTDIR}/alignments/prank/orthogroup_proteins.prank -protein -F
+                test -f {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas
+                cp {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas {output.aln}
+                '''
+
+
+    if PAL2NAL_METHODS:
+        rule align_cds_pal2nal_method:
+            input:
+                protein_aln=OUTDIR / "alignments" / "{method}" / "orthogroup_proteins.protein.aln.fasta",
+                cds=rules.map_cds.output.mapped,
+            output:
+                protein_aln=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.protein.aln.fasta",
+                codon_aln=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.codon.aln.fasta"
+            wildcard_constraints:
+                method=PAL2NAL_PATTERN
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/alignments/{wildcards.method}
+                cp {input.protein_aln} {output.protein_aln}
+                ("{PAL2NAL}" {input.protein_aln} {input.cds} -output fasta > {output.codon_aln}) || \
+                (perl "{PAL2NAL}" {input.protein_aln} {input.cds} -output fasta > {output.codon_aln})
+                test -s {output.codon_aln}
+                '''
+
+
+    rule align_proteins_all_methods:
         input:
-            rules.map_cds.output.mapped
-        output:
-            protein_aln=OUTDIR / "alignments" / "mapped_orthogroup_cds.protein.aln.fasta",
-            codon_aln=OUTDIR / "alignments" / "mapped_orthogroup_cds.codon.aln.fasta"
-        threads: THREADS
-        shell:
-            r'''
-            mkdir -p {OUTDIR}/alignments
-            cp {input} {OUTDIR}/alignments/mapped_orthogroup_cds.fasta
-            cd {OUTDIR}/alignments && \
-            "{BABAPPALIGN}" mapped_orthogroup_cds.fasta --model babappascore --mode codon
-            test -f {output.protein_aln}
-            test -f {output.codon_aln}
-            '''
+            expand(OUTDIR / "alignments" / "{method}" / "orthogroup_proteins.protein.aln.fasta", method=ALIGNMENT_METHODS)
+
+
+    rule align_cds_all_methods:
+        input:
+            expand(OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.protein.aln.fasta", method=ALIGNMENT_METHODS),
+            expand(OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.codon.aln.fasta", method=ALIGNMENT_METHODS)
 
 
     if USE_CLIPKIT:
-        rule trim_protein_alignment:
+        rule trim_protein_alignment_method:
             input:
-                rules.align_proteins.output.aln
+                OUTDIR / "alignments" / "{method}" / "orthogroup_proteins.protein.aln.fasta"
             output:
-                trimmed=OUTDIR / "trimmed" / "orthogroup_proteins.clipkit.fasta"
+                trimmed=OUTDIR / "trimmed" / "{method}" / "orthogroup_proteins.clipkit.fasta"
+            wildcard_constraints:
+                method=METHOD_PATTERN
             shell:
                 r'''
-                mkdir -p {OUTDIR}/trimmed
+                mkdir -p {OUTDIR}/trimmed/{wildcards.method}
                 "{CLIPKIT}" {input} -m {CLIPKIT_MODE_PROTEIN:q} -s aa -o {output.trimmed}
                 '''
 
 
-        rule trim_codon_alignment:
+        rule trim_codon_alignment_method:
             input:
-                rules.align_cds.output.codon_aln
+                OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.codon.aln.fasta"
             output:
-                trimmed=OUTDIR / "trimmed" / "mapped_orthogroup_cds.clipkit.fasta"
+                trimmed=OUTDIR / "trimmed" / "{method}" / "mapped_orthogroup_cds.clipkit.fasta"
+            wildcard_constraints:
+                method=METHOD_PATTERN
             shell:
                 r'''
-                mkdir -p {OUTDIR}/trimmed
+                mkdir -p {OUTDIR}/trimmed/{wildcards.method}
                 "{CLIPKIT}" {input} -m {CLIPKIT_MODE_CODON:q} --codon -o {output.trimmed}
                 '''
 
 
-        rule strip_terminal_stop_codon:
+        rule strip_terminal_stop_codon_method:
             input:
-                rules.trim_codon_alignment.output.trimmed
+                OUTDIR / "trimmed" / "{method}" / "mapped_orthogroup_cds.clipkit.fasta"
             output:
-                cleaned=OUTDIR / "trimmed" / "mapped_orthogroup_cds.clipkit.nostop.fasta"
+                cleaned=OUTDIR / "trimmed" / "{method}" / "mapped_orthogroup_cds.clipkit.nostop.fasta"
+            wildcard_constraints:
+                method=METHOD_PATTERN
             shell:
                 r'''
                 python -m babappasnake.scripts.strip_terminal_stop_codon \
                   --input {input} \
                   --output {output.cleaned}
                 '''
-        TREE_PROT_ALN = rules.trim_protein_alignment.output.trimmed
-        TEST_CDS_ALN = rules.strip_terminal_stop_codon.output.cleaned
-    else:
-        TREE_PROT_ALN = rules.align_proteins.output.aln
-        TEST_CDS_ALN = rules.align_cds.output.codon_aln
 
 
-    rule iqtree_ml:
+        rule trim_protein_alignment_all_methods:
+            input:
+                expand(OUTDIR / "trimmed" / "{method}" / "orthogroup_proteins.clipkit.fasta", method=ALIGNMENT_METHODS)
+
+
+        rule trim_codon_alignment_all_methods:
+            input:
+                expand(OUTDIR / "trimmed" / "{method}" / "mapped_orthogroup_cds.clipkit.fasta", method=ALIGNMENT_METHODS)
+
+
+        rule strip_terminal_stop_codon_all_methods:
+            input:
+                expand(OUTDIR / "trimmed" / "{method}" / "mapped_orthogroup_cds.clipkit.nostop.fasta", method=ALIGNMENT_METHODS)
+
+
+    def tree_protein_alignment(wildcards):
+        if USE_CLIPKIT:
+            return OUTDIR / "trimmed" / wildcards.method / "orthogroup_proteins.clipkit.fasta"
+        return OUTDIR / "alignments" / wildcards.method / "orthogroup_proteins.protein.aln.fasta"
+
+
+    def test_cds_alignment(wildcards):
+        if USE_CLIPKIT:
+            return OUTDIR / "trimmed" / wildcards.method / "mapped_orthogroup_cds.clipkit.nostop.fasta"
+        return OUTDIR / "alignments" / wildcards.method / "mapped_orthogroup_cds.codon.aln.fasta"
+
+
+    rule iqtree_ml_method:
         input:
-            TREE_PROT_ALN
+            tree_protein_alignment
         output:
-            tree=OUTDIR / "tree" / "orthogroup.treefile"
+            tree=OUTDIR / "tree" / "{method}" / "orthogroup.treefile"
+        wildcard_constraints:
+            method=METHOD_PATTERN
         threads: THREADS
         params:
             bnni="-bnni" if IQTREE_BNNI else ""
         shell:
             r'''
-            mkdir -p {OUTDIR}/tree
-            "{IQTREE}" -s {input} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/orthogroup
+            mkdir -p {OUTDIR}/tree/{wildcards.method}
+            "{IQTREE}" -s {input} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/{wildcards.method}/orthogroup
             test -f {output.tree}
             '''
 
-    rule root_iqtree_outgroup:
+
+    rule iqtree_ml_all_methods:
         input:
-            tree=rules.iqtree_ml.output.tree
+            expand(OUTDIR / "tree" / "{method}" / "orthogroup.treefile", method=ALIGNMENT_METHODS)
+
+
+    rule root_iqtree_outgroup_method:
+        input:
+            tree=OUTDIR / "tree" / "{method}" / "orthogroup.treefile"
         output:
-            rooted=OUTDIR / "tree" / "orthogroup.rooted.treefile"
+            rooted=OUTDIR / "tree" / "{method}" / "orthogroup.rooted.treefile"
+        wildcard_constraints:
+            method=METHOD_PATTERN
         params:
             outgroup=OUTGROUP_QUERY
         shell:
@@ -210,24 +361,30 @@ if HAVE_CDS:
               --output {output.rooted} \
               --outgroup {params.outgroup:q}
             '''
-    ROOTED_TREE = rules.root_iqtree_outgroup.output.rooted
 
 
-    rule codeml_asr:
+    rule root_iqtree_outgroup_all_methods:
         input:
-            aln=TEST_CDS_ALN,
-            tree=ROOTED_TREE,
+            expand(OUTDIR / "tree" / "{method}" / "orthogroup.rooted.treefile", method=ALIGNMENT_METHODS)
+
+
+    rule codeml_asr_method:
+        input:
+            aln=test_cds_alignment,
+            tree=OUTDIR / "tree" / "{method}" / "orthogroup.rooted.treefile",
         output:
-            done=OUTDIR / "asr" / "asr_done.json",
-            mlc=OUTDIR / "asr" / "mlc_asr.txt",
-            rst=OUTDIR / "asr" / "rst",
+            done=OUTDIR / "asr" / "{method}" / "asr_done.json",
+            mlc=OUTDIR / "asr" / "{method}" / "mlc_asr.txt",
+            rst=OUTDIR / "asr" / "{method}" / "rst",
+        wildcard_constraints:
+            method=METHOD_PATTERN
         shell:
             r'''
-            mkdir -p {OUTDIR}/asr
+            mkdir -p {OUTDIR}/asr/{wildcards.method}
             python -m babappasnake.scripts.run_codeml_asr \
               --alignment {input.aln} \
               --tree {input.tree} \
-              --outdir {OUTDIR}/asr \
+              --outdir {OUTDIR}/asr/{wildcards.method} \
               --codeml "{CODEML}" \
               --codonfreq {CODEML_CODONFREQ}
             test -f {output.done}
@@ -236,21 +393,28 @@ if HAVE_CDS:
             '''
 
 
-    rule hyphy_exploratory:
+    rule codeml_asr_all_methods:
         input:
-            aln=TEST_CDS_ALN,
-            tree=ROOTED_TREE,
+            expand(OUTDIR / "asr" / "{method}" / "asr_done.json", method=ALIGNMENT_METHODS)
+
+
+    rule hyphy_exploratory_method:
+        input:
+            aln=test_cds_alignment,
+            tree=OUTDIR / "tree" / "{method}" / "orthogroup.rooted.treefile",
         output:
-            done=OUTDIR / "hyphy" / "hyphy_done.json",
-            absrel=OUTDIR / "hyphy" / "absrel.json",
-            meme=OUTDIR / "hyphy" / "meme.json",
+            done=OUTDIR / "hyphy" / "{method}" / "hyphy_done.json",
+            absrel=OUTDIR / "hyphy" / "{method}" / "absrel.json",
+            meme=OUTDIR / "hyphy" / "{method}" / "meme.json",
+        wildcard_constraints:
+            method=METHOD_PATTERN
         threads: THREADS
         shell:
             r'''
             python -m babappasnake.scripts.run_hyphy \
               --cds-aln {input.aln} \
               --tree {input.tree} \
-              --outdir {OUTDIR}/hyphy \
+              --outdir {OUTDIR}/hyphy/{wildcards.method} \
               --threads {threads} \
               --hyphy "{HYPHY}" \
               --absrel-branches {ABSREL_BRANCHES:q} \
@@ -261,13 +425,20 @@ if HAVE_CDS:
             '''
 
 
-    rule parse_foregrounds:
+    rule hyphy_exploratory_all_methods:
         input:
-            absrel=rules.hyphy_exploratory.output.absrel
+            expand(OUTDIR / "hyphy" / "{method}" / "hyphy_done.json", method=ALIGNMENT_METHODS)
+
+
+    rule parse_foregrounds_method:
+        input:
+            absrel=OUTDIR / "hyphy" / "{method}" / "absrel.json"
         output:
-            tsv=OUTDIR / "hyphy" / "significant_foregrounds.tsv",
-            lst=OUTDIR / "hyphy" / "significant_foregrounds.txt",
-            meta=OUTDIR / "hyphy" / "foreground_threshold.json",
+            tsv=OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.tsv",
+            lst=OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.txt",
+            meta=OUTDIR / "hyphy" / "{method}" / "foreground_threshold.json",
+        wildcard_constraints:
+            method=METHOD_PATTERN
         shell:
             r'''
             python -m babappasnake.scripts.parse_hyphy_foregrounds \
@@ -282,36 +453,52 @@ if HAVE_CDS:
             '''
 
 
-    rule prepare_foreground_trees:
+    rule parse_foregrounds_all_methods:
         input:
-            tree=ROOTED_TREE,
-            lst=rules.parse_foregrounds.output.lst,
+            expand(OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.tsv", method=ALIGNMENT_METHODS),
+            expand(OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.txt", method=ALIGNMENT_METHODS),
+            expand(OUTDIR / "hyphy" / "{method}" / "foreground_threshold.json", method=ALIGNMENT_METHODS)
+
+
+    rule prepare_foreground_trees_method:
+        input:
+            tree=OUTDIR / "tree" / "{method}" / "orthogroup.rooted.treefile",
+            lst=OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.txt",
         output:
-            manifest=OUTDIR / "branchsite" / "foreground_trees.tsv"
+            manifest=OUTDIR / "branchsite" / "{method}" / "foreground_trees.tsv"
+        wildcard_constraints:
+            method=METHOD_PATTERN
         shell:
             r'''
-            mkdir -p {OUTDIR}/branchsite
+            mkdir -p {OUTDIR}/branchsite/{wildcards.method}
             python -m babappasnake.scripts.prepare_foreground_trees \
               --tree {input.tree} \
               --foreground-list {input.lst} \
-              --outdir {OUTDIR}/branchsite \
+              --outdir {OUTDIR}/branchsite/{wildcards.method} \
               --manifest {output.manifest}
             '''
 
 
-    rule branchsite_batch:
+    rule prepare_foreground_trees_all_methods:
         input:
-            aln=TEST_CDS_ALN,
-            manifest=rules.prepare_foreground_trees.output.manifest,
-            lst=rules.parse_foregrounds.output.lst,
+            expand(OUTDIR / "branchsite" / "{method}" / "foreground_trees.tsv", method=ALIGNMENT_METHODS)
+
+
+    rule branchsite_batch_method:
+        input:
+            aln=test_cds_alignment,
+            manifest=OUTDIR / "branchsite" / "{method}" / "foreground_trees.tsv",
+            lst=OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.txt",
         output:
-            tsv=OUTDIR / "branchsite" / "branchsite_results.tsv"
+            tsv=OUTDIR / "branchsite" / "{method}" / "branchsite_results.tsv"
+        wildcard_constraints:
+            method=METHOD_PATTERN
         threads: THREADS
         shell:
             r'''
             python -m babappasnake.scripts.run_branchsite_batch \
               --alignment {input.aln} \
-              --tree-dir {OUTDIR}/branchsite \
+              --tree-dir {OUTDIR}/branchsite/{wildcards.method} \
               --foreground-list {input.lst} \
               --out-tsv {output.tsv} \
               --codeml "{CODEML}" \
@@ -320,26 +507,82 @@ if HAVE_CDS:
             '''
 
 
-    rule final_summary:
+    rule branchsite_batch_all_methods:
+        input:
+            expand(OUTDIR / "branchsite" / "{method}" / "branchsite_results.tsv", method=ALIGNMENT_METHODS)
+
+
+    rule final_summary_method:
         input:
             rbh=rules.rbh_orthogroup.output.rbh,
             mapping=rules.map_cds.output.table,
-            absrel=rules.parse_foregrounds.output.tsv,
-            absrel_meta=rules.parse_foregrounds.output.meta,
-            branchsite=rules.branchsite_batch.output.tsv,
-            hyphy_done=rules.hyphy_exploratory.output.done,
+            absrel=OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.tsv",
+            absrel_meta=OUTDIR / "hyphy" / "{method}" / "foreground_threshold.json",
+            branchsite=OUTDIR / "branchsite" / "{method}" / "branchsite_results.tsv",
+            hyphy_done=OUTDIR / "hyphy" / "{method}" / "hyphy_done.json",
         output:
-            OUTDIR / "summary" / "episodic_selection_summary.txt"
+            OUTDIR / "summary" / "{method}" / "episodic_selection_summary.txt"
+        wildcard_constraints:
+            method=METHOD_PATTERN
         shell:
             r'''
-            mkdir -p {OUTDIR}/summary
+            mkdir -p {OUTDIR}/summary/{wildcards.method}
             python -m babappasnake.scripts.summarize_results \
               --rbh {input.rbh} \
               --mapping {input.mapping} \
               --absrel {input.absrel} \
               --absrel-meta {input.absrel_meta} \
               --branchsite {input.branchsite} \
-              --hyphy-dir {OUTDIR}/hyphy \
+              --hyphy-dir {OUTDIR}/hyphy/{wildcards.method} \
               --meme-p {MEME_P} \
+              --method {wildcards.method} \
               --out {output}
+            '''
+
+
+    rule final_summary_all_methods:
+        input:
+            expand(OUTDIR / "summary" / "{method}" / "episodic_selection_summary.txt", method=ALIGNMENT_METHODS)
+
+
+    rule compare_alignment_methods:
+        input:
+            summaries=expand(OUTDIR / "summary" / "{method}" / "episodic_selection_summary.txt", method=ALIGNMENT_METHODS),
+            absrel=expand(OUTDIR / "hyphy" / "{method}" / "significant_foregrounds.tsv", method=ALIGNMENT_METHODS),
+            absrel_meta=expand(OUTDIR / "hyphy" / "{method}" / "foreground_threshold.json", method=ALIGNMENT_METHODS),
+            branchsite=expand(OUTDIR / "branchsite" / "{method}" / "branchsite_results.tsv", method=ALIGNMENT_METHODS),
+        output:
+            OUTDIR / "summary" / "comparative_reproducibility_summary.txt"
+        params:
+            methods=",".join(ALIGNMENT_METHODS)
+        shell:
+            r'''
+            mkdir -p {OUTDIR}/summary
+            python -m babappasnake.scripts.compare_alignment_methods \
+              --outdir {OUTDIR} \
+              --methods {params.methods:q} \
+              --out {output}
+            '''
+
+
+    rule final_summary_primary_alias:
+        input:
+            OUTDIR / "summary" / PRIMARY_METHOD / "episodic_selection_summary.txt"
+        output:
+            OUTDIR / "summary" / "episodic_selection_summary.txt"
+        shell:
+            r'''
+            cp {input} {output}
+            '''
+
+
+    rule asr_primary_alias:
+        input:
+            OUTDIR / "asr" / PRIMARY_METHOD / "asr_done.json"
+        output:
+            OUTDIR / "asr" / "asr_done.json"
+        shell:
+            r'''
+            mkdir -p {OUTDIR}/asr
+            cp {input} {output}
             '''

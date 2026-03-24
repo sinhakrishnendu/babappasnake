@@ -1,5 +1,7 @@
 outdir: babappasnake_run
 outgroup_query: ""
+alignment_methods:
+  - babappalign
 iqtree_model: "MFP"
 iqtree_bootstrap: 1000
 iqtree_bnni: false
