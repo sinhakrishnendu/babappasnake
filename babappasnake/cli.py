@@ -297,8 +297,6 @@ def validate_selected_alignment_tools(
         missing.append("mafft")
     if "prank" in methods and "prank" not in resolved_tools:
         missing.append("prank")
-    if any(method in {"mafft", "prank"} for method in methods) and "pal2nal" not in resolved_tools:
-        missing.append("pal2nal")
     if "clipkit" in trim_states and "clipkit" not in resolved_tools:
         missing.append("clipkit")
     if missing:

@@ -10,7 +10,7 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 2. Builds an orthogroup from your query and proteomes.
 3. Maps user CDS records to orthogroup proteins (after lowercase intron clipping and uppercase ORF window extraction).
 4. Creates protein and codon alignments for selected engines (`babappalign`, `mafft`, `prank`).
-5. For `mafft`/`prank`, protein alignments are converted to codon alignments with `pal2nal`.
+5. For `mafft`/`prank`, protein alignments are converted to codon alignments with a built-in robust Python back-translator (pal2nal-like behavior, tolerant to mild mismatches).
 6. Branches each selected alignment method into trim pathways:
    - `raw` (untrimmed alignment branch)
    - `clipkit` (ClipKIT-trimmed branch)
@@ -39,19 +39,19 @@ pip install babappasnake
 Optional (only if you select those pathways):
 
 ```bash
-conda install -c conda-forge -c bioconda mafft prank pal2nal
+conda install -c conda-forge -c bioconda mafft prank
 ```
 
 Notes:
 - `babappalign` is installed automatically as a PyPI dependency of `babappasnake`.
-- `mafft`, `prank`, `pal2nal`, `blast`, `iqtree`, `hyphy`, and `paml/codeml` are external binaries and still need system/conda installation.
+- `mafft`, `prank`, `blast`, `iqtree`, `hyphy`, and `paml/codeml` are external binaries and still need system/conda installation.
 
 ### Quick verification
 
 ```bash
 babappasnake --help
 which blastp makeblastdb hyphy codeml clipkit
-which babappalign mafft prank pal2nal.pl
+which babappalign mafft prank
 ```
 
 Notes:

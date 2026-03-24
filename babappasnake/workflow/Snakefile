@@ -139,7 +139,6 @@ CLIPKIT = EXE.get("clipkit", "clipkit")
 BABAPPALIGN = EXE.get("babappalign", "babappalign")
 MAFFT = EXE.get("mafft", "mafft")
 PRANK = EXE.get("prank", "prank")
-PAL2NAL = EXE.get("pal2nal", "pal2nal")
 
 HAVE_CDS = USER_CDS.exists() and USER_CDS.stat().st_size > 0
 
@@ -316,18 +315,15 @@ if HAVE_CDS:
                 codon_aln=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.codon.aln.fasta"
             wildcard_constraints:
                 method=PAL2NAL_PATTERN
-            params:
-                pal2nal_cds=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.pal2nal_input.fasta"
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/{wildcards.method}
-                python -m babappasnake.scripts.prepare_pal2nal_inputs \
-                  --protein-aln {input.protein_aln} \
-                  --cds {input.cds} \
-                  --out-protein {output.protein_aln} \
-                  --out-cds {params.pal2nal_cds}
-                ("{PAL2NAL}" {output.protein_aln} {params.pal2nal_cds} -output fasta > {output.codon_aln}) || \
-                (perl "{PAL2NAL}" {output.protein_aln} {params.pal2nal_cds} -output fasta > {output.codon_aln})
+                python -m babappasnake.scripts.backtranslate_alignment \
+                  --protein-aln {input.protein_aln:q} \
+                  --cds {input.cds:q} \
+                  --out-protein {output.protein_aln:q} \
+                  --out-codon {output.codon_aln:q} \
+                  --report-json {OUTDIR}/alignments/{wildcards.method}/backtranslate_report.json
                 test -s {output.codon_aln}
                 '''
 

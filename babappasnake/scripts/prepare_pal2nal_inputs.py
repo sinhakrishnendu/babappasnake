@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from Bio import SeqIO
+from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 
@@ -52,6 +54,30 @@ def resolve_cds_for_protein(rec: SeqRecord, cds_index: dict[str, SeqRecord]) -> 
     )
 
 
+def translated_cds_protein(cds_rec: SeqRecord) -> str:
+    translated = str(Seq(str(cds_rec.seq)).translate(to_stop=False)).upper()
+    if translated.endswith("*"):
+        translated = translated[:-1]
+    return translated
+
+
+def reconcile_alignment_to_translation(aligned_protein: str, translated: str) -> str:
+    nongap = [ch for ch in aligned_protein if ch != "-"]
+    if len(nongap) != len(translated):
+        raise RuntimeError(
+            f"Alignment residue count ({len(nongap)}) does not match CDS-translated length ({len(translated)})"
+        )
+    out: list[str] = []
+    idx = 0
+    for ch in aligned_protein:
+        if ch == "-":
+            out.append("-")
+        else:
+            out.append(translated[idx])
+            idx += 1
+    return "".join(out)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--protein-aln", required=True)
@@ -71,6 +97,7 @@ def main() -> None:
     normalized_protein: list[SeqRecord] = []
     ordered_cds: list[SeqRecord] = []
     seen_ids: set[str] = set()
+    dropped: list[str] = []
 
     for rec in protein_records:
         prot_id = rec.id.strip()
@@ -81,8 +108,27 @@ def main() -> None:
         seen_ids.add(prot_id)
 
         cds_rec = resolve_cds_for_protein(rec, cds_index)
-        normalized_protein.append(SeqRecord(rec.seq, id=prot_id, description=""))
+        translated = translated_cds_protein(cds_rec)
+        try:
+            reconciled = reconcile_alignment_to_translation(str(rec.seq).upper(), translated)
+        except RuntimeError as exc:
+            dropped.append(f"{prot_id}: {exc}")
+            continue
+        normalized_protein.append(SeqRecord(Seq(reconciled), id=prot_id, description=""))
         ordered_cds.append(SeqRecord(cds_rec.seq, id=prot_id, description=""))
+
+    if dropped:
+        print(
+            f"[WARN] Dropped {len(dropped)} sequence(s) due protein/CDS length inconsistency before pal2nal.",
+            file=sys.stderr,
+        )
+        for msg in dropped:
+            print(f"[WARN] {msg}", file=sys.stderr)
+
+    if len(normalized_protein) < 3:
+        raise RuntimeError(
+            f"Only {len(normalized_protein)} sequence(s) remained after pal2nal consistency filtering; at least 3 are required."
+        )
 
     out_protein = Path(a.out_protein)
     out_cds = Path(a.out_cds)
@@ -94,4 +140,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
