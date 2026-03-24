@@ -172,14 +172,14 @@ def main() -> None:
     pvals = [pvals_by_fg[fg] for fg in foregrounds if fg in pvals_by_fg]
 
     if rows:
-        reject, qvals, _, _ = multipletests(pvals, alpha=0.1, method="fdr_bh")
+        reject, qvals, _, _ = multipletests(pvals, alpha=0.05, method="fdr_bh")
     else:
         qvals = []
         reject = []
 
     with open(a.out_tsv, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh, delimiter="\t")
-        w.writerow(["foreground_branch", "lnL_alt", "lnL_null", "LRT", "p_value", "q_value", "significant_BH_0.1"])
+        w.writerow(["foreground_branch", "lnL_alt", "lnL_null", "LRT", "p_value", "q_value", "significant_BH_0.05"])
         for row, q, rej in zip(rows, qvals, reject):
             w.writerow(row + [q, str(bool(rej))])
 
