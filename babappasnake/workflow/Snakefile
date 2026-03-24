@@ -215,11 +215,11 @@ if HAVE_CDS:
                 rules.map_cds.output.proteins
             output:
                 aln=OUTDIR / "alignments" / "prank" / "orthogroup_proteins.protein.aln.fasta"
-            threads: PER_METHOD_CORES
+            threads: 1
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/prank
-                "{PRANK}" -d={input} -o={OUTDIR}/alignments/prank/orthogroup_proteins.prank -protein -F -threads={threads}
+                "{PRANK}" -d={input} -o={OUTDIR}/alignments/prank/orthogroup_proteins.prank -protein -F
                 test -f {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas
                 cp {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas {output.aln}
                 '''

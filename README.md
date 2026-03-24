@@ -31,7 +31,7 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 conda create -n babappasnake -c conda-forge -c bioconda \
   python=3.11 blast iqtree hyphy paml clipkit pip
 conda activate babappasnake
-pip install babappalign babappasnake
+pip install babappasnake
 ```
 
 Optional (only if you select those pathways):
@@ -39,6 +39,10 @@ Optional (only if you select those pathways):
 ```bash
 conda install -c conda-forge -c bioconda mafft prank pal2nal
 ```
+
+Notes:
+- `babappalign` is installed automatically as a PyPI dependency of `babappasnake`.
+- `mafft`, `prank`, `pal2nal`, `blast`, `iqtree`, `hyphy`, and `paml/codeml` are external binaries and still need system/conda installation.
 
 ### Quick verification
 

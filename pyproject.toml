@@ -21,7 +21,8 @@ dependencies = [
   "statsmodels>=0.14",
   "pyyaml>=6.0",
   "snakemake>=8.0",
-  "clipkit>=2.7.0"
+  "clipkit>=2.7.0",
+  "babappalign"
 ]
 
 [project.scripts]
