@@ -15,6 +15,26 @@ def read_tsv(path: str) -> list[dict]:
         return list(csv.DictReader(fh, delimiter="\t"))
 
 
+def pick_value(row: dict, keys: tuple[str, ...], default: str = "NA") -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value) != "":
+            return str(value)
+    return default
+
+
+def detect_branchsite_significance_key(rows: list[dict]) -> str | None:
+    preferred = ("significant_BH_0.05", "significant_BH_0.1", "significant_BH")
+    available = {k for row in rows for k in row.keys()}
+    for key in preferred:
+        if key in available:
+            return key
+    for key in sorted(available):
+        if key.startswith("significant_BH_"):
+            return key
+    return None
+
+
 def count_meme_sites(meme_json_path: str, pcut: float) -> int:
     p = Path(meme_json_path)
     if not p.exists():
@@ -67,9 +87,15 @@ def main() -> None:
     lines.append("Branch-site codeml confirmation")
     lines.append("-" * 31)
     if branchsite:
+        signif_key = detect_branchsite_significance_key(branchsite)
         for row in branchsite:
+            significant_value = row.get(signif_key, "NA") if signif_key else "NA"
             lines.append(
-                f"  - {row['foreground_branch']}: LRT={row['LRT']}, p={row['p_value']}, q={row['q_value']}, significant={row['significant_BH_0.1']}"
+                f"  - {pick_value(row, ('foreground_branch',), default='NA')}: "
+                f"LRT={pick_value(row, ('LRT',), default='NA')}, "
+                f"p={pick_value(row, ('p_value',), default='NA')}, "
+                f"q={pick_value(row, ('q_value',), default='NA')}, "
+                f"significant={significant_value}"
             )
     else:
         lines.append("No branch-site codeml tests were run because no foreground branch passed exploratory screening.")
