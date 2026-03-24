@@ -4,6 +4,7 @@ import argparse
 import csv
 import importlib.resources as ir
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -31,7 +32,13 @@ CLIPKIT_MODE_CHOICES = (
     "relaxed",
 )
 HYPHY_BRANCH_CHOICES = ("Leaves", "Internal", "All")
-SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
+ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
+    "1": ("babappalign",),
+    "2": ("mafft",),
+    "3": ("prank",),
+    "4": ("babappalign", "mafft", "prank"),
+}
+DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
 
 
 @dataclass(frozen=True)
@@ -185,31 +192,43 @@ def prompt_codonfreq(default: int) -> int:
         print("Invalid selection.")
 
 
-def parse_alignment_methods(raw: object) -> list[str]:
-    if isinstance(raw, str):
-        tokens = [token.strip().lower() for token in raw.split(",") if token.strip()]
-    elif isinstance(raw, (list, tuple)):
-        tokens = [str(token).strip().lower() for token in raw if str(token).strip()]
-    else:
-        tokens = []
+def parse_alignment_method_option(raw: object) -> list[str]:
+    option = str(raw).strip()
+    if option not in ALIGNMENT_METHOD_OPTION_MAP:
+        raise SystemExit(
+            "Invalid --alignment-methods option. Choose one of: "
+            "1 (babappalign), 2 (mafft), 3 (prank), 4 (all three)"
+        )
+    return list(ALIGNMENT_METHOD_OPTION_MAP[option])
 
-    if not tokens:
-        tokens = ["babappalign"]
-    if any(token == "all" for token in tokens):
-        tokens = list(SUPPORTED_ALIGNMENT_METHODS)
 
-    normalized: list[str] = []
-    seen = set()
-    for token in tokens:
-        if token not in SUPPORTED_ALIGNMENT_METHODS:
-            raise SystemExit(
-                f"Unsupported alignment method '{token}'. "
-                f"Choose from: {', '.join(SUPPORTED_ALIGNMENT_METHODS)}"
-            )
-        if token not in seen:
-            seen.add(token)
-            normalized.append(token)
-    return normalized
+def compute_per_method_cores(total_threads: int, method_count: int) -> int:
+    return max(1, int(total_threads) // max(1, int(method_count)))
+
+
+def format_alignment_option(option: str) -> str:
+    methods = ALIGNMENT_METHOD_OPTION_MAP.get(option, ())
+    return f"{option} ({', '.join(methods)})" if methods else option
+
+
+def prompt_alignment_method_option(default: str) -> str:
+    print("Alignment method selection (--alignment-methods)")
+    labels = {
+        "1": "babappalign",
+        "2": "mafft",
+        "3": "prank",
+        "4": "all three",
+    }
+    for key in ("1", "2", "3", "4"):
+        mark = " (default)" if key == default else ""
+        print(f"  {key}. {labels[key]}{mark}")
+    while True:
+        value = input("Select option (1/2/3/4) or press Enter for default: ").strip()
+        if not value:
+            return default
+        if value in ALIGNMENT_METHOD_OPTION_MAP:
+            return value
+        print("Invalid selection.")
 
 
 def validate_selected_alignment_tools(methods: list[str], resolved_tools: dict[str, str]) -> None:
@@ -239,15 +258,9 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
     args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
-    methods_default = ",".join(parse_alignment_methods(args.alignment_methods))
-    args.alignment_methods = prompt_text(
-        "Alignment methods (--alignment-methods; comma-separated from babappalign,mafft,prank)",
-        methods_default,
-        required=True,
-    )
-    args.alignment_methods = ",".join(parse_alignment_methods(args.alignment_methods))
+    args.alignment_methods = prompt_alignment_method_option(str(args.alignment_methods))
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
-    args.threads = prompt_int("Threads (--threads)", int(args.threads))
+    args.threads = prompt_int("Total cores (--threads)", int(args.threads))
     args.use_clipkit = "yes" if prompt_yes_no("Use ClipKIT?", args.use_clipkit == "yes") else "no"
     if args.use_clipkit == "yes":
         args.clipkit_mode_protein = prompt_choice(
@@ -293,7 +306,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
-    print(f"- alignment_methods: {args.alignment_methods}")
+    print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
     print(f"- use_clipkit: {args.use_clipkit}")
@@ -326,11 +339,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--outdir", default="babappasnake_run", help="Output directory")
     p.add_argument(
         "--alignment-methods",
-        default="babappalign",
-        help="Comma-separated alignment engines to run (choose any of: babappalign,mafft,prank) [default: babappalign]",
+        default="4",
+        choices=["1", "2", "3", "4"],
+        help="Alignment engine selection: 1=babappalign, 2=mafft, 3=prank, 4=all three [default: 4]",
     )
     p.add_argument("--coverage", type=float, default=0.70, help="RBH minimum reciprocal coverage [default: 0.70]")
-    p.add_argument("--threads", type=int, default=4, help="Threads for external tools [default: 4]")
+    p.add_argument(
+        "--threads",
+        type=int,
+        default=DEFAULT_TOTAL_THREADS,
+        help=f"Total Snakemake cores (equally split across selected MSA pathways) [default: {DEFAULT_TOTAL_THREADS}]",
+    )
     p.add_argument("--outgroup", default="", help="Outgroup label query used to root the IQ-TREE output (case-insensitive substring match)")
     p.add_argument("--iqtree-bootstrap", type=int, default=1000, help="IQ-TREE ultrafast bootstrap replicates [default: 1000]")
     p.add_argument("--iqtree-bnni", choices=["yes", "no"], default="no", help="Enable IQ-TREE -bnni [default: no]")
@@ -371,7 +390,7 @@ def validate_inputs(args: argparse.Namespace) -> None:
         cds_path = Path(args.cds)
         if not cds_path.is_file():
             raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
-    parse_alignment_methods(args.alignment_methods)
+    parse_alignment_method_option(args.alignment_methods)
 
 
 def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
@@ -389,14 +408,20 @@ def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
         shutil.copy2(args.cds, cds_dst_dir / "orthogroup_cds.fasta")
 
 
-def write_config(args: argparse.Namespace, outdir: Path, executables: dict[str, str]) -> Path:
-    methods = parse_alignment_methods(args.alignment_methods)
+def write_config(
+    args: argparse.Namespace,
+    outdir: Path,
+    executables: dict[str, str],
+    methods: list[str],
+    per_method_cores: int,
+) -> Path:
     cfg = {
         "outdir": str(outdir.resolve()),
         "query_fasta": str((outdir / "inputs" / "query.fasta").resolve()),
         "proteomes_dir": str((outdir / "inputs" / "proteomes").resolve()),
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
         "alignment_methods": methods,
+        "per_method_cores": int(per_method_cores),
         "coverage": float(args.coverage),
         "threads": int(args.threads),
         "outgroup_query": str(args.outgroup).strip(),
@@ -731,7 +756,7 @@ def run_guided_pipeline(
     snake_args: str,
     snakefile: Path,
 ) -> int:
-    methods = parse_alignment_methods(args.alignment_methods)
+    methods = parse_alignment_method_option(args.alignment_methods)
     rbh_step = StepSpec(
         "rbh_orthogroup",
         "Build orthogroup proteins and RBH mapping.",
@@ -804,8 +829,20 @@ def main() -> None:
     args = parse_args()
     args = maybe_prompt_interactive(args)
     validate_inputs(args)
-    methods = parse_alignment_methods(args.alignment_methods)
-    args.alignment_methods = ",".join(methods)
+    methods = parse_alignment_method_option(args.alignment_methods)
+    method_count = max(1, len(methods))
+    if int(args.threads) < method_count:
+        required_cores = method_count
+        print(
+            f"[INFO] Increasing --threads from {args.threads} to {required_cores} "
+            "so each selected MSA pathway can run in parallel."
+        )
+        args.threads = required_cores
+    per_method_cores = compute_per_method_cores(int(args.threads), method_count)
+    print(
+        f"[INFO] Core distribution: total={args.threads}, selected_methods={method_count}, "
+        f"per_method={per_method_cores}."
+    )
 
     resolved, missing = resolve_tools()
     if missing:
@@ -816,7 +853,13 @@ def main() -> None:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     stage_inputs(args, outdir)
-    config_path = write_config(args, outdir, resolved)
+    config_path = write_config(
+        args=args,
+        outdir=outdir,
+        executables=resolved,
+        methods=methods,
+        per_method_cores=per_method_cores,
+    )
     snakefile = ir.files("babappasnake").joinpath("workflow", "Snakefile")
 
     if args.guided == "yes" and is_tty_interactive():

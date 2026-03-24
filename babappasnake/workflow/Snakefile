@@ -34,7 +34,7 @@ def _normalize_alignment_methods(raw):
         methods = []
 
     if not methods:
-        methods = ["babappalign"]
+        methods = list(SUPPORTED_ALIGNMENT_METHODS)
 
     normalized = []
     seen = set()
@@ -59,7 +59,12 @@ def _normalize_alignment_methods(raw):
     return normalized
 
 
-ALIGNMENT_METHODS = _normalize_alignment_methods(config.get("alignment_methods", ["babappalign"]))
+ALIGNMENT_METHODS = _normalize_alignment_methods(config.get("alignment_methods", list(SUPPORTED_ALIGNMENT_METHODS)))
+METHOD_COUNT = max(1, len(ALIGNMENT_METHODS))
+PER_METHOD_CORES = min(
+    max(1, THREADS),
+    max(1, int(config.get("per_method_cores", max(1, THREADS // METHOD_COUNT)))),
+)
 METHOD_PATTERN = "|".join(ALIGNMENT_METHODS)
 PAL2NAL_METHODS = [method for method in ALIGNMENT_METHODS if method in {"mafft", "prank"}]
 PAL2NAL_PATTERN = "|".join(PAL2NAL_METHODS)
@@ -160,7 +165,7 @@ if HAVE_CDS:
                 rules.map_cds.output.proteins
             output:
                 aln=OUTDIR / "alignments" / "babappalign" / "orthogroup_proteins.protein.aln.fasta"
-            threads: THREADS
+            threads: PER_METHOD_CORES
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/babappalign
@@ -177,7 +182,7 @@ if HAVE_CDS:
             output:
                 protein_aln=OUTDIR / "alignments" / "babappalign" / "mapped_orthogroup_cds.protein.aln.fasta",
                 codon_aln=OUTDIR / "alignments" / "babappalign" / "mapped_orthogroup_cds.codon.aln.fasta"
-            threads: THREADS
+            threads: PER_METHOD_CORES
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/babappalign
@@ -195,7 +200,7 @@ if HAVE_CDS:
                 rules.map_cds.output.proteins
             output:
                 aln=OUTDIR / "alignments" / "mafft" / "orthogroup_proteins.protein.aln.fasta"
-            threads: THREADS
+            threads: PER_METHOD_CORES
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/mafft
@@ -210,11 +215,11 @@ if HAVE_CDS:
                 rules.map_cds.output.proteins
             output:
                 aln=OUTDIR / "alignments" / "prank" / "orthogroup_proteins.protein.aln.fasta"
-            threads: THREADS
+            threads: PER_METHOD_CORES
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/prank
-                "{PRANK}" -d={input} -o={OUTDIR}/alignments/prank/orthogroup_proteins.prank -protein -F
+                "{PRANK}" -d={input} -o={OUTDIR}/alignments/prank/orthogroup_proteins.prank -protein -F -threads={threads}
                 test -f {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas
                 cp {OUTDIR}/alignments/prank/orthogroup_proteins.prank.best.fas {output.aln}
                 '''
@@ -329,7 +334,7 @@ if HAVE_CDS:
             tree=OUTDIR / "tree" / "{method}" / "orthogroup.treefile"
         wildcard_constraints:
             method=METHOD_PATTERN
-        threads: THREADS
+        threads: PER_METHOD_CORES
         params:
             bnni="-bnni" if IQTREE_BNNI else ""
         shell:
@@ -408,7 +413,7 @@ if HAVE_CDS:
             meme=OUTDIR / "hyphy" / "{method}" / "meme.json",
         wildcard_constraints:
             method=METHOD_PATTERN
-        threads: THREADS
+        threads: PER_METHOD_CORES
         shell:
             r'''
             python -m babappasnake.scripts.run_hyphy \
@@ -493,7 +498,7 @@ if HAVE_CDS:
             tsv=OUTDIR / "branchsite" / "{method}" / "branchsite_results.tsv"
         wildcard_constraints:
             method=METHOD_PATTERN
-        threads: THREADS
+        threads: PER_METHOD_CORES
         shell:
             r'''
             python -m babappasnake.scripts.run_branchsite_batch \

@@ -2,6 +2,9 @@ outdir: babappasnake_run
 outgroup_query: ""
 alignment_methods:
   - babappalign
+  - mafft
+  - prank
+threads: 9
 iqtree_model: "MFP"
 iqtree_bootstrap: 1000
 iqtree_bnni: false

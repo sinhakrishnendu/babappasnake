@@ -58,7 +58,7 @@ Notes:
 - `--query`: protein FASTA containing the query sequence.
 - `--cds` (optional at first run): CDS FASTA for the orthogroup.
 - `--outgroup`: outgroup query string used to root the IQ-TREE output (e.g., `culex` matches headers containing `culex`).
-- `--alignment-methods`: choose one or more alignment engines from `babappalign,mafft,prank`.
+- `--alignment-methods`: numeric alignment selector (`1=babappalign`, `2=mafft`, `3=prank`, `4=all three`).
 
 CDS quality checks (when `--cds` is supplied):
 - Lowercase intron characters are clipped from each CDS.
@@ -78,7 +78,8 @@ This mode prompts for pipeline settings, executes one rule at a time, asks `run/
 It asks for CDS only after `rbh_orthogroup` finishes, then asks optional outgroup text for rooting.
 It also prints explicit orthogroup membership in terminal: groups included and groups omitted at RBH stage.
 If outgroup is left empty, rooting is safely skippable in guided mode and downstream uses unrooted IQ-TREE trees.
-You can choose any one method or any combination of `babappalign`, `mafft`, and `prank`; downstream runs only for selected methods.
+You can choose one method or all three methods from the numbered selector. Default is `4` (all three).
+Available cores are split equally across selected method pathways (`per_method = floor(threads / selected_methods)`), and total cores are auto-raised only when below the number of selected pathways.
 
 ### Case A: you already have the CDS file
 
@@ -87,10 +88,10 @@ babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
-  --alignment-methods babappalign,mafft,prank \
+  --alignment-methods 4 \
   --outgroup culex \
   --outdir run01 \
-  --threads 8 \
+  --threads 12 \
   --interactive no \
   --guided no
 ```
@@ -105,7 +106,7 @@ babappasnake \
   --query /path/to/query.fasta \
   --outgroup culex \
   --outdir run01 \
-  --threads 8 \
+  --threads 12 \
   --interactive no \
   --guided no
 ```
@@ -161,9 +162,9 @@ Options:
 - `--cds PATH`: CDS FASTA (optional for initial run).
 - `--outgroup TEXT`: outgroup query used for tree rooting (case-insensitive substring match against tip headers).
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
-- `--alignment-methods TEXT`: comma-separated method selection from `babappalign,mafft,prank` (choose one, two, all three, or `all`; default: `babappalign`).
+- `--alignment-methods {1,2,3,4}`: method selection (`1=babappalign`, `2=mafft`, `3=prank`, `4=all three`; default: `4`).
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
-- `--threads INT`: parallel threads/cores (default: `4`).
+- `--threads INT`: total Snakemake cores. Method pathways receive an equal split (`floor(threads / selected_methods)`), and total cores are auto-raised only when below selected method count (default: detected CPU core count).
 - `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).
 - `--iqtree-bnni {yes,no}`: enable/disable IQ-TREE `-bnni` (default: `no`).
 - `--iqtree-model TEXT`: IQ-TREE model string (default: `MFP`).
@@ -189,9 +190,10 @@ babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
+  --alignment-methods 4 \
   --outgroup culex \
   --outdir run01 \
-  --threads 8 \
+  --threads 12 \
   --snake-args "--keep-going"
 ```
 
