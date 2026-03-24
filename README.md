@@ -11,15 +11,17 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 3. Maps user CDS records to orthogroup proteins (after lowercase intron clipping and uppercase ORF window extraction).
 4. Creates protein and codon alignments for selected engines (`babappalign`, `mafft`, `prank`).
 5. For `mafft`/`prank`, protein alignments are converted to codon alignments with `pal2nal`.
-6. Trims alignments with ClipKIT (`kpic-smart-gap`).
-7. Removes terminal stop codon artifacts after ClipKIT on the codon alignment.
-8. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`).
-9. Roots inferred trees using a user-supplied outgroup label query (case-insensitive header matching).
-10. Runs HyPhy aBSREL and MEME with user-selected branch scopes (default `Leaves`).
+6. Branches each selected alignment method into trim pathways:
+   - `raw` (untrimmed alignment branch)
+   - `clipkit` (ClipKIT-trimmed branch)
+7. Runs terminal stop-codon cleanup on codon alignments in both branches.
+8. Infers an ML tree with IQ-TREE (`-m MFP -B 1000 -redo`) per `(method, trim_state)` pathway.
+9. Roots inferred trees using a user-supplied outgroup label query (case-insensitive header matching; optional).
+10. Runs HyPhy aBSREL and MEME with user-selected branch scopes (default `Leaves`) for each pathway.
 11. Selects foreground branches from aBSREL using dynamic thresholding.
-12. Runs branch-site `codeml` only for selected branches (alt and null models).
-13. Runs codeml ancestral sequence reconstruction (ASR).
-14. Produces per-method summaries and a comparative reproducibility summary across selected alignment engines.
+12. Runs branch-site `codeml` only for selected branches (alt and null models) per pathway.
+13. Runs codeml ancestral sequence reconstruction (ASR) per pathway.
+14. Produces pathway-level summaries plus robustness reports across both alignment method and trimming decision.
 
 ## Installation (for end users)
 
@@ -83,7 +85,11 @@ It asks for CDS only after `rbh_orthogroup` finishes, then asks optional outgrou
 It also prints explicit orthogroup membership in terminal: groups included and groups omitted at RBH stage.
 If outgroup is left empty, rooting is safely skippable in guided mode and downstream uses unrooted IQ-TREE trees.
 You can choose one method or all three methods from the numbered selector. Default is `4` (all three).
-Available cores are split equally across selected method pathways (`per_method = floor(threads / selected_methods)`), and total cores are auto-raised only when below the number of selected pathways.
+You can choose trimming strategy:
+- `raw` only
+- `clipkit` only
+- `both` (robustness mode; runs both branches for each selected method)
+Available cores are split across active pathways (`selected_methods x selected_trim_states`), and total cores are auto-raised only when below pathway count.
 
 ### Case A: you already have the CDS file
 
@@ -93,6 +99,7 @@ babappasnake \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
   --alignment-methods 4 \
+  --trim-strategy both \
   --outgroup culex \
   --outdir run01 \
   --threads 12 \
@@ -127,6 +134,19 @@ Then place your CDS FASTA at:
 
 Re-run the same command. The workflow resumes automatically.
 
+## Robustness pathway model
+
+When `--alignment-methods 4 --trim-strategy both` is selected, one run evaluates:
+
+- `babappalign_raw`
+- `babappalign_clipkit`
+- `mafft_raw`
+- `mafft_clipkit`
+- `prank_raw`
+- `prank_clipkit`
+
+Each pathway keeps isolated outputs under `<module>/<method>/<trim_state>/...` to avoid collisions.
+
 ## Dynamic significance logic
 
 Foreground selection from aBSREL uses dynamic p-thresholding:
@@ -146,14 +166,19 @@ All outputs are written under `--outdir` (default: `babappasnake_run`).
 Most important files:
 
 - `summary/episodic_selection_summary.txt`: top-level summary alias (primary selected method).
-- `summary/<method>/episodic_selection_summary.txt`: method-specific final reports.
-- `summary/comparative_reproducibility_summary.txt`: cross-method reproducibility comparison.
-- `hyphy/<method>/foreground_threshold.json`: selected dynamic threshold and hit count.
-- `hyphy/<method>/significant_foregrounds.tsv`: selected aBSREL foreground branches.
-- `branchsite/<method>/branchsite_results.tsv`: codeml branch-site statistics and BH significance.
-- `asr/<method>/asr_done.json`: ASR completion record.
-- `tree/<method>/orthogroup.treefile`: method-specific inferred ML tree (unrooted IQ-TREE output).
-- `tree/<method>/orthogroup.rooted.treefile`: method-specific rooted tree used downstream.
+- `summary/<method>/<trim_state>/episodic_selection_summary.txt`: pathway-specific final reports.
+- `summary/robustness_matrix.tsv`: one row per `(method, trim_state)` pathway with alignment/tree/test counts and status.
+- `summary/robustness_consensus.tsv`: replicated signals across pathways with reproducibility labels.
+- `summary/robustness_narrative.txt`: human-readable robustness interpretation.
+- `summary/comparative_reproducibility_summary.txt`: alignment-method sensitivity, trim sensitivity, and label counts.
+- `summary/robustness_publication_table.tex`: publication-ready comparative signal table.
+- `summary/run_provenance.json`: machine-readable run provenance (methods, trim states, parameters, key outputs).
+- `hyphy/<method>/<trim_state>/foreground_threshold.json`: selected dynamic threshold and hit count.
+- `hyphy/<method>/<trim_state>/significant_foregrounds.tsv`: selected aBSREL foreground branches.
+- `branchsite/<method>/<trim_state>/branchsite_results.tsv`: codeml branch-site statistics and BH significance.
+- `asr/<method>/<trim_state>/asr_done.json`: pathway ASR completion record.
+- `tree/<method>/<trim_state>/orthogroup.treefile`: pathway inferred ML tree (unrooted IQ-TREE output).
+- `tree/<method>/<trim_state>/orthogroup.rooted.treefile`: pathway rooted tree used downstream.
 
 ## CLI reference
 
@@ -167,8 +192,9 @@ Options:
 - `--outgroup TEXT`: outgroup query used for tree rooting (case-insensitive substring match against tip headers).
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
 - `--alignment-methods {1,2,3,4}`: method selection (`1=babappalign`, `2=mafft`, `3=prank`, `4=all three`; default: `4`).
+- `--trim-strategy {raw,clipkit,both}`: trimming strategy selector (default behavior is legacy-compatible ClipKIT unless changed).
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
-- `--threads INT`: total Snakemake cores. Method pathways receive an equal split (`floor(threads / selected_methods)`), and total cores are auto-raised only when below selected method count (default: detected CPU core count).
+- `--threads INT`: total Snakemake cores. Active pathways receive an equal split (`floor(threads / (selected_methods x selected_trim_states))`), and total cores are auto-raised only when below pathway count (default: detected CPU core count).
 - `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).
 - `--iqtree-bnni {yes,no}`: enable/disable IQ-TREE `-bnni` (default: `no`).
 - `--iqtree-model TEXT`: IQ-TREE model string (default: `MFP`).
@@ -180,7 +206,7 @@ Options:
 - `--absrel-dynamic-step FLOAT`: dynamic foreground increment (default: `0.01`).
 - `--absrel-dynamic-max FLOAT`: dynamic foreground max p-value (default: `0.2`).
 - `--meme-p FLOAT`: MEME reporting threshold in summary (default: `0.05`).
-- `--use-clipkit {yes,no}`: enable/disable ClipKIT (default: `yes`).
+- `--use-clipkit {yes,no}`: legacy compatibility layer. If `--trim-strategy` is omitted: `yes -> clipkit`, `no -> raw`.
 - `--clipkit-mode-protein TEXT`: ClipKIT mode for protein trimming (default: `kpic-smart-gap`).
 - `--clipkit-mode-codon TEXT`: ClipKIT mode for codon trimming (default: `kpic-smart-gap`).
 - `--snake-args "..."`: extra raw arguments forwarded to Snakemake.
@@ -195,6 +221,7 @@ babappasnake \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
   --alignment-methods 4 \
+  --trim-strategy both \
   --outgroup culex \
   --outdir run01 \
   --threads 12 \

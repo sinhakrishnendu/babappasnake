@@ -4,7 +4,12 @@ alignment_methods:
   - babappalign
   - mafft
   - prank
+trim_strategy: clipkit
+trim_states:
+  - clipkit
 threads: 9
+per_method_cores: 3
+per_pathway_cores: 3
 iqtree_model: "MFP"
 iqtree_bootstrap: 1000
 iqtree_bnni: false

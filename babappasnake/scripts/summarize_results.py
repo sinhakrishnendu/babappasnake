@@ -54,6 +54,7 @@ def main() -> None:
     p.add_argument("--hyphy-dir", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--method", default="")
+    p.add_argument("--trim-state", default="")
     p.add_argument("--meme-p", type=float, default=0.05)
     a = p.parse_args()
 
@@ -73,6 +74,8 @@ def main() -> None:
     header = "BABAPPASNAKE EPISODIC SELECTION SUMMARY"
     if a.method:
         header += f" [{a.method}]"
+    if a.trim_state:
+        header += f" [{a.trim_state}]"
     lines.append(header)
     lines.append("=" * 42)
     lines.append("")
@@ -111,6 +114,9 @@ def main() -> None:
     lines.append(f"aBSREL foregrounds: {Path(a.absrel).resolve()}")
     lines.append(f"Branch-site results: {Path(a.branchsite).resolve()}")
     lines.append(f"HyPhy directory: {hyphy_dir.resolve()}")
+    lines.append(f"Method: {a.method or 'NA'}")
+    lines.append(f"Trim state: {a.trim_state or 'NA'}")
+    lines.append(f"MEME threshold: {a.meme_p}")
     Path(a.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

@@ -38,6 +38,7 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
     "3": ("prank",),
     "4": ("babappalign", "mafft", "prank"),
 }
+TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
 DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
 
 
@@ -206,6 +207,38 @@ def compute_per_method_cores(total_threads: int, method_count: int) -> int:
     return max(1, int(total_threads) // max(1, int(method_count)))
 
 
+def parse_trim_strategy(raw: object) -> str:
+    strategy = str(raw).strip().lower()
+    if strategy not in TRIM_STRATEGY_CHOICES:
+        raise SystemExit(
+            "Invalid --trim-strategy option. Choose one of: raw, clipkit, both"
+        )
+    return strategy
+
+
+def derive_trim_strategy(trim_strategy: str | None, use_clipkit: str) -> str:
+    if trim_strategy:
+        return parse_trim_strategy(trim_strategy)
+    return "clipkit" if str(use_clipkit).strip().lower() == "yes" else "raw"
+
+
+def trim_states_from_strategy(strategy: str) -> list[str]:
+    normalized = parse_trim_strategy(strategy)
+    if normalized == "raw":
+        return ["raw"]
+    if normalized == "clipkit":
+        return ["clipkit"]
+    return ["raw", "clipkit"]
+
+
+def enumerate_pathways(methods: list[str], trim_states: list[str]) -> list[str]:
+    return [f"{method}_{trim_state}" for method in methods for trim_state in trim_states]
+
+
+def compute_per_pathway_cores(total_threads: int, pathway_count: int) -> int:
+    return max(1, int(total_threads) // max(1, int(pathway_count)))
+
+
 def format_alignment_option(option: str) -> str:
     methods = ALIGNMENT_METHOD_OPTION_MAP.get(option, ())
     return f"{option} ({', '.join(methods)})" if methods else option
@@ -231,7 +264,32 @@ def prompt_alignment_method_option(default: str) -> str:
         print("Invalid selection.")
 
 
-def validate_selected_alignment_tools(methods: list[str], resolved_tools: dict[str, str]) -> None:
+def prompt_trim_strategy(default: str) -> str:
+    print("Choose trimming strategy")
+    options = (
+        ("1", "raw", "raw only"),
+        ("2", "clipkit", "ClipKIT only"),
+        ("3", "both", "both raw and ClipKIT for robustness"),
+    )
+    for key, strategy, label in options:
+        mark = " (default)" if strategy == default else ""
+        print(f"  {key}. {label}{mark}")
+    while True:
+        value = input("Select option (1/2/3) or press Enter for default: ").strip().lower()
+        if not value:
+            return default
+        if value in {"1", "2", "3"}:
+            return options[int(value) - 1][1]
+        if value in TRIM_STRATEGY_CHOICES:
+            return value
+        print("Invalid selection.")
+
+
+def validate_selected_alignment_tools(
+    methods: list[str],
+    trim_states: list[str],
+    resolved_tools: dict[str, str],
+) -> None:
     missing: list[str] = []
     if "babappalign" in methods and "babappalign" not in resolved_tools:
         missing.append("babappalign")
@@ -241,6 +299,8 @@ def validate_selected_alignment_tools(methods: list[str], resolved_tools: dict[s
         missing.append("prank")
     if any(method in {"mafft", "prank"} for method in methods) and "pal2nal" not in resolved_tools:
         missing.append("pal2nal")
+    if "clipkit" in trim_states and "clipkit" not in resolved_tools:
+        missing.append("clipkit")
     if missing:
         raise SystemExit(
             "Selected alignment methods require additional tools not found on PATH: "
@@ -261,8 +321,11 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.alignment_methods = prompt_alignment_method_option(str(args.alignment_methods))
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Total cores (--threads)", int(args.threads))
-    args.use_clipkit = "yes" if prompt_yes_no("Use ClipKIT?", args.use_clipkit == "yes") else "no"
-    if args.use_clipkit == "yes":
+    default_trim = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
+    args.trim_strategy = prompt_trim_strategy(default_trim)
+    trim_states = trim_states_from_strategy(args.trim_strategy)
+    args.use_clipkit = "yes" if "clipkit" in trim_states else "no"
+    if "clipkit" in trim_states:
         args.clipkit_mode_protein = prompt_choice(
             "ClipKIT protein mode (--clipkit-mode-protein)",
             CLIPKIT_MODE_CHOICES,
@@ -307,10 +370,12 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
     print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
+    print(f"- trim_strategy: {args.trim_strategy}")
+    print(f"- pathways: {', '.join(enumerate_pathways(parse_alignment_method_option(args.alignment_methods), trim_states))}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
-    print(f"- use_clipkit: {args.use_clipkit}")
-    if args.use_clipkit == "yes":
+    print(f"- use_clipkit (compat): {args.use_clipkit}")
+    if "clipkit" in trim_states:
         print(f"- clipkit_mode_protein: {args.clipkit_mode_protein}")
         print(f"- clipkit_mode_codon: {args.clipkit_mode_codon}")
     print(f"- iqtree_bootstrap: {args.iqtree_bootstrap}")
@@ -357,6 +422,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--absrel-branches", default="Leaves", help="HyPhy aBSREL branches selector [default: Leaves]")
     p.add_argument("--meme-branches", default="Leaves", help="HyPhy MEME branches selector [default: Leaves]")
     p.add_argument("--codeml-codonfreq", type=int, default=7, help="codeml CodonFreq value [default: 7]")
+    p.add_argument(
+        "--trim-strategy",
+        choices=list(TRIM_STRATEGY_CHOICES),
+        default=None,
+        help=(
+            "Trimming strategy: raw (no ClipKIT), clipkit, or both for robustness. "
+            "If omitted, legacy --use-clipkit mapping is used."
+        ),
+    )
     p.add_argument("--clipkit-mode-protein", default="kpic-smart-gap", help="ClipKIT mode for protein trimming")
     p.add_argument("--clipkit-mode-codon", default="kpic-smart-gap", help="ClipKIT mode for codon trimming")
     p.add_argument("--absrel-p", type=float, default=0.05, help="Leaf-branch significance threshold for aBSREL [default: 0.05]")
@@ -364,7 +438,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--absrel-dynamic-step", type=float, default=0.01, help="Dynamic aBSREL step size [default: 0.01]")
     p.add_argument("--absrel-dynamic-max", type=float, default=0.2, help="Dynamic aBSREL max threshold [default: 0.2]")
     p.add_argument("--meme-p", type=float, default=0.05, help="MEME site threshold retained in summary [default: 0.05]")
-    p.add_argument("--use-clipkit", choices=["yes", "no"], default="yes", help="Trim alignments with ClipKIT [default: yes]")
+    p.add_argument(
+        "--use-clipkit",
+        choices=["yes", "no"],
+        default="yes",
+        help="Legacy compatibility switch mapping to --trim-strategy clipkit/raw when --trim-strategy is not provided [default: yes]",
+    )
     p.add_argument("--snake-args", default="", help="Extra raw arguments forwarded to snakemake")
     p.add_argument("--interactive", choices=["yes", "no"], default="yes", help="Prompt for pipeline settings interactively [default: yes]")
     p.add_argument("--guided", choices=["yes", "no"], default="yes", help="Run step-by-step guided execution [default: yes]")
@@ -391,6 +470,7 @@ def validate_inputs(args: argparse.Namespace) -> None:
         if not cds_path.is_file():
             raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
     parse_alignment_method_option(args.alignment_methods)
+    parse_trim_strategy(derive_trim_strategy(args.trim_strategy, args.use_clipkit))
 
 
 def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
@@ -413,7 +493,10 @@ def write_config(
     outdir: Path,
     executables: dict[str, str],
     methods: list[str],
+    trim_strategy: str,
+    trim_states: list[str],
     per_method_cores: int,
+    per_pathway_cores: int,
 ) -> Path:
     cfg = {
         "outdir": str(outdir.resolve()),
@@ -421,7 +504,10 @@ def write_config(
         "proteomes_dir": str((outdir / "inputs" / "proteomes").resolve()),
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
         "alignment_methods": methods,
+        "trim_strategy": trim_strategy,
+        "trim_states": trim_states,
         "per_method_cores": int(per_method_cores),
+        "per_pathway_cores": int(per_pathway_cores),
         "coverage": float(args.coverage),
         "threads": int(args.threads),
         "outgroup_query": str(args.outgroup).strip(),
@@ -431,7 +517,7 @@ def write_config(
         "absrel_branches": str(args.absrel_branches).strip() or "Leaves",
         "meme_branches": str(args.meme_branches).strip() or "Leaves",
         "codeml_codonfreq": int(args.codeml_codonfreq),
-        "use_clipkit": args.use_clipkit == "yes",
+        "use_clipkit": "clipkit" in trim_states,
         "clipkit_mode_protein": str(args.clipkit_mode_protein).strip(),
         "clipkit_mode_codon": str(args.clipkit_mode_codon).strip(),
         "absrel_p": float(args.absrel_p),
@@ -476,7 +562,9 @@ def run_snakemake_target(config_path: Path, cores: int, target: str, snake_args:
     return result.returncode
 
 
-def build_step_plan(have_cds: bool, use_clipkit: bool, methods: list[str]) -> list[StepSpec]:
+def build_step_plan(have_cds: bool, methods: list[str], trim_states: list[str]) -> list[StepSpec]:
+    pathways = enumerate_pathways(methods, trim_states)
+
     if not have_cds:
         return [
             StepSpec(
@@ -506,68 +594,96 @@ def build_step_plan(have_cds: bool, use_clipkit: bool, methods: list[str]) -> li
             "Generate codon alignments for selected methods.",
             tuple(f"alignments/{method}/mapped_orthogroup_cds.codon.aln.fasta" for method in methods),
         ),
+        StepSpec(
+            "prepare_branch_inputs_all_pathways",
+            "Prepare raw/ClipKIT branch inputs for each selected pathway.",
+            tuple(
+                f"alignments/{method}/{trim_state}/mapped_orthogroup_cds.analysis.fasta"
+                for method in methods
+                for trim_state in trim_states
+            ),
+        ),
     ]
-    if use_clipkit:
-        steps.extend(
-            [
-                StepSpec(
-                    "trim_protein_alignment_all_methods",
-                    "Trim protein alignments with ClipKIT.",
-                    tuple(f"trimmed/{method}/orthogroup_proteins.clipkit.fasta" for method in methods),
-                ),
-                StepSpec(
-                    "trim_codon_alignment_all_methods",
-                    "Trim codon alignments with ClipKIT.",
-                    tuple(f"trimmed/{method}/mapped_orthogroup_cds.clipkit.fasta" for method in methods),
-                ),
-                StepSpec(
-                    "strip_terminal_stop_codon_all_methods",
-                    "Remove terminal stop codons from trimmed codon alignments.",
-                    tuple(f"trimmed/{method}/mapped_orthogroup_cds.clipkit.nostop.fasta" for method in methods),
-                ),
-            ]
-        )
     steps.extend(
         [
             StepSpec(
-                "iqtree_ml_all_methods",
-                "Infer ML phylogeny with IQ-TREE for selected methods.",
-                tuple(f"tree/{method}/orthogroup.treefile" for method in methods),
+                "iqtree_ml_all_pathways",
+                "Infer ML phylogeny with IQ-TREE for all selected pathways.",
+                tuple(f"tree/{method}/{trim_state}/orthogroup.treefile" for method in methods for trim_state in trim_states),
             ),
             StepSpec(
-                "root_iqtree_outgroup_all_methods",
-                "Root method-specific trees using the outgroup query.",
-                tuple(f"tree/{method}/orthogroup.rooted.treefile" for method in methods),
+                "root_iqtree_outgroup_all_pathways",
+                "Root pathway-specific trees using the outgroup query.",
+                tuple(
+                    f"tree/{method}/{trim_state}/orthogroup.rooted.treefile"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "hyphy_exploratory_all_methods",
-                "Run HyPhy aBSREL + MEME exploratory tests for selected methods.",
-                tuple(f"hyphy/{method}/hyphy_done.json" for method in methods),
+                "hyphy_exploratory_all_pathways",
+                "Run HyPhy aBSREL + MEME exploratory tests for all selected pathways.",
+                tuple(
+                    f"hyphy/{method}/{trim_state}/hyphy_done.json"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "parse_foregrounds_all_methods",
-                "Select significant foreground branches for selected methods.",
-                tuple(f"hyphy/{method}/significant_foregrounds.tsv" for method in methods),
+                "parse_foregrounds_all_pathways",
+                "Select significant foreground branches for all selected pathways.",
+                tuple(
+                    f"hyphy/{method}/{trim_state}/significant_foregrounds.tsv"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "prepare_foreground_trees_all_methods",
-                "Prepare branch-labeled trees for branch-site codeml (all methods).",
-                tuple(f"branchsite/{method}/foreground_trees.tsv" for method in methods),
+                "prepare_foreground_trees_all_pathways",
+                "Prepare branch-labeled trees for branch-site codeml (all selected pathways).",
+                tuple(
+                    f"branchsite/{method}/{trim_state}/foreground_trees.tsv"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "branchsite_batch_all_methods",
-                "Run branch-site codeml across selected foregrounds (all methods).",
-                tuple(f"branchsite/{method}/branchsite_results.tsv" for method in methods),
+                "branchsite_batch_all_pathways",
+                "Run branch-site codeml across selected foregrounds (all pathways).",
+                tuple(
+                    f"branchsite/{method}/{trim_state}/branchsite_results.tsv"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "codeml_asr_all_methods",
-                "Run codeml ancestral sequence reconstruction for selected methods.",
-                tuple(f"asr/{method}/asr_done.json" for method in methods),
+                "codeml_asr_all_pathways",
+                "Run codeml ancestral sequence reconstruction for all selected pathways.",
+                tuple(
+                    f"asr/{method}/{trim_state}/asr_done.json"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
             ),
             StepSpec(
-                "final_summary_all_methods",
-                "Write method-specific episodic selection summaries.",
-                tuple(f"summary/{method}/episodic_selection_summary.txt" for method in methods),
+                "final_summary_all_pathways",
+                "Write pathway-specific episodic selection summaries.",
+                tuple(
+                    f"summary/{method}/{trim_state}/episodic_selection_summary.txt"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
+            ),
+            StepSpec(
+                "robustness_reports",
+                "Write robustness matrix, consensus, narrative, and publication-ready table across pathways.",
+                (
+                    "summary/robustness_matrix.tsv",
+                    "summary/robustness_consensus.tsv",
+                    "summary/robustness_narrative.txt",
+                    "summary/comparative_reproducibility_summary.txt",
+                    "summary/robustness_publication_table.tex",
+                ),
             ),
             StepSpec(
                 "final_summary_primary_alias",
@@ -580,9 +696,9 @@ def build_step_plan(have_cds: bool, use_clipkit: bool, methods: list[str]) -> li
                 ("asr/asr_done.json",),
             ),
             StepSpec(
-                "compare_alignment_methods",
-                "Write comparative reproducibility summary across alignment methods.",
-                ("summary/comparative_reproducibility_summary.txt",),
+                "write_run_provenance",
+                "Write machine-readable run provenance.",
+                ("summary/run_provenance.json",),
             ),
         ]
     )
@@ -733,18 +849,19 @@ def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
         yaml.safe_dump(cfg, fh, sort_keys=False)
 
 
-def stage_unrooted_tree_for_downstream(outdir: Path, methods: list[str]) -> None:
+def stage_unrooted_tree_for_downstream(outdir: Path, methods: list[str], trim_states: list[str]) -> None:
     staged = 0
     for method in methods:
-        src = outdir / "tree" / method / "orthogroup.treefile"
-        dst = outdir / "tree" / method / "orthogroup.rooted.treefile"
-        if not src.exists():
-            print(f"Cannot stage unrooted tree fallback for {method}; missing: {src}")
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        staged += 1
-    print(f"Staged unrooted tree fallback for {staged} method(s).")
+        for trim_state in trim_states:
+            src = outdir / "tree" / method / trim_state / "orthogroup.treefile"
+            dst = outdir / "tree" / method / trim_state / "orthogroup.rooted.treefile"
+            if not src.exists():
+                print(f"Cannot stage unrooted tree fallback for {method}_{trim_state}; missing: {src}")
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            staged += 1
+    print(f"Staged unrooted tree fallback for {staged} pathway(s).")
 
 
 def run_guided_pipeline(
@@ -752,11 +869,15 @@ def run_guided_pipeline(
     config_path: Path,
     outdir: Path,
     cores: int,
-    use_clipkit: bool,
+    trim_states: list[str],
     snake_args: str,
     snakefile: Path,
 ) -> int:
     methods = parse_alignment_method_option(args.alignment_methods)
+    pathways = enumerate_pathways(methods, trim_states)
+    print("Selected pathways:")
+    for pathway in pathways:
+        print(f"  - {pathway}")
     rbh_step = StepSpec(
         "rbh_orthogroup",
         "Build orthogroup proteins and RBH mapping.",
@@ -798,15 +919,15 @@ def run_guided_pipeline(
         else:
             print("No outgroup query provided; tree will be left unrooted for downstream use.")
 
-    steps = build_step_plan(have_cds, use_clipkit, methods)
+    steps = build_step_plan(have_cds, methods, trim_states)
     total_steps = 1 + len(steps)
     print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
         allow_skip = False
         on_skip = None
-        if step.rule == "root_iqtree_outgroup_all_methods" and not str(args.outgroup).strip():
+        if step.rule == "root_iqtree_outgroup_all_pathways" and not str(args.outgroup).strip():
             allow_skip = True
-            on_skip = lambda: stage_unrooted_tree_for_downstream(outdir, methods)
+            on_skip = lambda: stage_unrooted_tree_for_downstream(outdir, methods, trim_states)
             print("No outgroup provided: running this step or skipping it will both use the unrooted tree downstream.")
         code = run_guided_step(
             config_path=config_path,
@@ -830,25 +951,34 @@ def main() -> None:
     args = maybe_prompt_interactive(args)
     validate_inputs(args)
     methods = parse_alignment_method_option(args.alignment_methods)
+    effective_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
+    trim_states = trim_states_from_strategy(effective_trim_strategy)
+    args.trim_strategy = effective_trim_strategy
+    args.use_clipkit = "yes" if "clipkit" in trim_states else "no"
+
     method_count = max(1, len(methods))
-    if int(args.threads) < method_count:
-        required_cores = method_count
+    pathway_count = max(1, len(methods) * len(trim_states))
+    if int(args.threads) < pathway_count:
+        required_cores = pathway_count
         print(
             f"[INFO] Increasing --threads from {args.threads} to {required_cores} "
-            "so each selected MSA pathway can run in parallel."
+            "so each selected pathway can run in parallel."
         )
         args.threads = required_cores
     per_method_cores = compute_per_method_cores(int(args.threads), method_count)
+    per_pathway_cores = compute_per_pathway_cores(int(args.threads), pathway_count)
     print(
         f"[INFO] Core distribution: total={args.threads}, selected_methods={method_count}, "
-        f"per_method={per_method_cores}."
+        f"selected_trim_states={len(trim_states)}, pathways={pathway_count}, "
+        f"per_method={per_method_cores}, per_pathway={per_pathway_cores}."
     )
+    print("[INFO] Selected pathways: " + ", ".join(enumerate_pathways(methods, trim_states)))
 
     resolved, missing = resolve_tools()
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
-    validate_selected_alignment_tools(methods, resolved)
+    validate_selected_alignment_tools(methods, trim_states, resolved)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -858,7 +988,10 @@ def main() -> None:
         outdir=outdir,
         executables=resolved,
         methods=methods,
+        trim_strategy=effective_trim_strategy,
+        trim_states=trim_states,
         per_method_cores=per_method_cores,
+        per_pathway_cores=per_pathway_cores,
     )
     snakefile = ir.files("babappasnake").joinpath("workflow", "Snakefile")
 
@@ -868,7 +1001,7 @@ def main() -> None:
             config_path=config_path,
             outdir=outdir,
             cores=int(args.threads),
-            use_clipkit=args.use_clipkit == "yes",
+            trim_states=trim_states,
             snake_args=args.snake_args,
             snakefile=snakefile,
         )

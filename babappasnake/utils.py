@@ -19,7 +19,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("iqtree", ("iqtree2", "iqtree3", "iqtree"), True, "conda install -c conda-forge -c bioconda iqtree"),
     ToolSpec("hyphy", ("hyphy",), True, "conda install -c conda-forge -c bioconda hyphy"),
     ToolSpec("codeml", ("codeml",), True, "conda install -c conda-forge -c bioconda paml"),
-    ToolSpec("clipkit", ("clipkit",), True, "conda install -c conda-forge -c bioconda clipkit"),
+    ToolSpec("clipkit", ("clipkit",), False, "conda install -c conda-forge -c bioconda clipkit"),
     ToolSpec("babappalign", ("babappalign",), False, "pip install babappalign"),
     ToolSpec("mafft", ("mafft",), False, "conda install -c conda-forge -c bioconda mafft"),
     ToolSpec("prank", ("prank",), False, "conda install -c conda-forge -c bioconda prank"),
