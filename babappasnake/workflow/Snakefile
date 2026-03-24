@@ -235,12 +235,18 @@ if HAVE_CDS:
                 codon_aln=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.codon.aln.fasta"
             wildcard_constraints:
                 method=PAL2NAL_PATTERN
+            params:
+                pal2nal_cds=OUTDIR / "alignments" / "{method}" / "mapped_orthogroup_cds.pal2nal_input.fasta"
             shell:
                 r'''
                 mkdir -p {OUTDIR}/alignments/{wildcards.method}
-                cp {input.protein_aln} {output.protein_aln}
-                ("{PAL2NAL}" {input.protein_aln} {input.cds} -output fasta > {output.codon_aln}) || \
-                (perl "{PAL2NAL}" {input.protein_aln} {input.cds} -output fasta > {output.codon_aln})
+                python -m babappasnake.scripts.prepare_pal2nal_inputs \
+                  --protein-aln {input.protein_aln} \
+                  --cds {input.cds} \
+                  --out-protein {output.protein_aln} \
+                  --out-cds {params.pal2nal_cds}
+                ("{PAL2NAL}" {output.protein_aln} {params.pal2nal_cds} -output fasta > {output.codon_aln}) || \
+                (perl "{PAL2NAL}" {output.protein_aln} {params.pal2nal_cds} -output fasta > {output.codon_aln})
                 test -s {output.codon_aln}
                 '''
 

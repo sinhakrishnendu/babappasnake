@@ -168,9 +168,9 @@ def main() -> None:
         crec, cleaned_seq, _ = translated[best_idx]
         cds_seq = trim_terminal_stop_codon(cleaned_seq)
         validate_cds_for_hyphy(cds_seq, prec.id)
-        new = SeqRecord(Seq(cds_seq), id=prec.id, description=f"mapped_from={crec.id};translated_similarity={best_score:.4f}")
+        new = SeqRecord(Seq(cds_seq), id=prec.id, description="")
         mapped_cds.append(new)
-        mapped_proteins.append(SeqRecord(prec.seq, id=prec.id, description=prec.description))
+        mapped_proteins.append(SeqRecord(prec.seq, id=prec.id, description=""))
         rows.append((prec.id, crec.id, f"{best_score:.4f}"))
 
     if skipped_proteins:
