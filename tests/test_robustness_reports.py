@@ -69,6 +69,10 @@ def _seed_pathway(outdir: Path, method: str, trim_state: str) -> None:
             "branchA\t12.3\t0.001\t0.01\tTrue\n"
         ),
     )
+    _write(
+        outdir / "hyphy" / method / trim_state / "hyphy_done.json",
+        json.dumps({"absrel_status": "ok", "meme_status": "ok"}) + "\n",
+    )
     _write(outdir / "asr" / method / trim_state / "asr_done.json", '{"done": true}\n')
 
 

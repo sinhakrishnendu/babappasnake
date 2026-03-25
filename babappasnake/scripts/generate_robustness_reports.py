@@ -220,6 +220,7 @@ def main() -> None:
         meme_json = outdir / "hyphy" / method / trim_state / "meme.json"
         branchsite_tsv = outdir / "branchsite" / method / trim_state / "branchsite_results.tsv"
         asr_done = outdir / "asr" / method / trim_state / "asr_done.json"
+        hyphy_done = outdir / "hyphy" / method / trim_state / "hyphy_done.json"
 
         n_seq, protein_len = read_fasta_shape(protein_path)
         _, cds_len = read_fasta_shape(cds_path)
@@ -265,12 +266,29 @@ def main() -> None:
             "absrel_tsv": absrel_tsv,
             "branchsite_tsv": branchsite_tsv,
             "asr_done": asr_done,
+            "hyphy_done": hyphy_done,
         }
         for key, path in required_map.items():
             if not path.exists() or path.stat().st_size == 0:
                 missing.append(key)
 
-        status = "ok" if not missing else f"incomplete_missing:{','.join(missing)}"
+        hyphy_failed = False
+        if hyphy_done.exists() and hyphy_done.stat().st_size > 0:
+            try:
+                hd = json.loads(hyphy_done.read_text(encoding="utf-8"))
+                hyphy_failed = (
+                    str(hd.get("absrel_status", "ok")).lower() != "ok"
+                    or str(hd.get("meme_status", "ok")).lower() != "ok"
+                )
+            except Exception:
+                hyphy_failed = False
+
+        if missing:
+            status = f"incomplete_missing:{','.join(missing)}"
+        elif hyphy_failed:
+            status = "hyphy_failed"
+        else:
+            status = "ok"
 
         matrix_rows.append(
             {
