@@ -87,3 +87,13 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     assert cfg["use_clipkit"] is True
     assert cfg["per_method_cores"] == 4
     assert cfg["per_pathway_cores"] == 2
+
+
+def test_force_robustness_trim_strategy_always_returns_both():
+    strategy, states = cli.force_robustness_trim_strategy("raw")
+    assert strategy == "both"
+    assert states == ["raw", "clipkit"]
+
+    strategy, states = cli.force_robustness_trim_strategy("clipkit")
+    assert strategy == "both"
+    assert states == ["raw", "clipkit"]

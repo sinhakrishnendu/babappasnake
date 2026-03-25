@@ -28,6 +28,7 @@ CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
 
 SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
 SUPPORTED_TRIM_STATES = ("raw", "clipkit")
+FORCED_TRIM_STATES = ["raw", "clipkit"]
 
 
 def _normalize_alignment_methods(raw):
@@ -109,6 +110,8 @@ TRIM_STATES = _normalize_trim_states(
     config.get("trim_strategy", ""),
     config.get("use_clipkit", True),
 )
+if set(TRIM_STATES) != set(FORCED_TRIM_STATES):
+    TRIM_STATES = list(FORCED_TRIM_STATES)
 
 METHOD_COUNT = max(1, len(ALIGNMENT_METHODS))
 PATHWAY_COUNT = max(1, len(ALIGNMENT_METHODS) * len(TRIM_STATES))

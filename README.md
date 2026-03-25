@@ -136,7 +136,8 @@ Re-run the same command. The workflow resumes automatically.
 
 ## Robustness pathway model
 
-When `--alignment-methods 4 --trim-strategy both` is selected, one run evaluates:
+By design, the current pipeline always evaluates both trim states (`raw` and `clipkit`) for each selected alignment method.  
+For `--alignment-methods 4`, one run evaluates:
 
 - `babappalign_raw`
 - `babappalign_clipkit`
@@ -192,7 +193,7 @@ Options:
 - `--outgroup TEXT`: outgroup query used for tree rooting (case-insensitive substring match against tip headers).
 - `--outdir PATH`: output directory (default: `babappasnake_run`).
 - `--alignment-methods {1,2,3,4}`: method selection (`1=babappalign`, `2=mafft`, `3=prank`, `4=all three`; default: `4`).
-- `--trim-strategy {raw,clipkit,both}`: trimming strategy selector (default behavior is legacy-compatible ClipKIT unless changed).
+- `--trim-strategy {raw,clipkit,both}`: accepted for compatibility, but runtime is forced to `both` so both raw and clipkit summaries are always generated.
 - `--coverage FLOAT`: RBH reciprocal coverage minimum (default: `0.70`).
 - `--threads INT`: total Snakemake cores. Active pathways receive an equal split (`floor(threads / (selected_methods x selected_trim_states))`), and total cores are auto-raised only when below pathway count (default: detected CPU core count).
 - `--iqtree-bootstrap INT`: UFBoot replicates for IQ-TREE (default: `1000`; typical options: `1000`, `5000`, `10000`).
@@ -206,7 +207,7 @@ Options:
 - `--absrel-dynamic-step FLOAT`: dynamic foreground increment (default: `0.01`).
 - `--absrel-dynamic-max FLOAT`: dynamic foreground max p-value (default: `0.2`).
 - `--meme-p FLOAT`: MEME reporting threshold in summary (default: `0.05`).
-- `--use-clipkit {yes,no}`: legacy compatibility layer. If `--trim-strategy` is omitted: `yes -> clipkit`, `no -> raw`.
+- `--use-clipkit {yes,no}`: legacy compatibility argument; current robustness mode always runs both raw and clipkit branches.
 - `--clipkit-mode-protein TEXT`: ClipKIT mode for protein trimming (default: `kpic-smart-gap`).
 - `--clipkit-mode-codon TEXT`: ClipKIT mode for codon trimming (default: `kpic-smart-gap`).
 - `--snake-args "..."`: extra raw arguments forwarded to Snakemake.

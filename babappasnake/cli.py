@@ -39,6 +39,8 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
     "4": ("babappalign", "mafft", "prank"),
 }
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
+FORCED_TRIM_STRATEGY = "both"
+FORCED_TRIM_STATES = ["raw", "clipkit"]
 DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
 
 
@@ -231,6 +233,16 @@ def trim_states_from_strategy(strategy: str) -> list[str]:
     return ["raw", "clipkit"]
 
 
+def force_robustness_trim_strategy(requested_strategy: str) -> tuple[str, list[str]]:
+    requested = parse_trim_strategy(requested_strategy)
+    if requested != FORCED_TRIM_STRATEGY:
+        print(
+            "[INFO] Trimming strategy is forced to 'both' for robustness "
+            "(raw + clipkit summaries will always be generated)."
+        )
+    return FORCED_TRIM_STRATEGY, list(FORCED_TRIM_STATES)
+
+
 def enumerate_pathways(methods: list[str], trim_states: list[str]) -> list[str]:
     return [f"{method}_{trim_state}" for method in methods for trim_state in trim_states]
 
@@ -320,9 +332,11 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Total cores (--threads)", int(args.threads))
     default_trim = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
-    args.trim_strategy = prompt_trim_strategy(default_trim)
-    trim_states = trim_states_from_strategy(args.trim_strategy)
-    args.use_clipkit = "yes" if "clipkit" in trim_states else "no"
+    args.trim_strategy, trim_states = force_robustness_trim_strategy(default_trim)
+    args.use_clipkit = "yes"
+    print(
+        "Trimming strategy: both (raw + ClipKIT branches) [enforced for robustness summaries]."
+    )
     if "clipkit" in trim_states:
         args.clipkit_mode_protein = prompt_choice(
             "ClipKIT protein mode (--clipkit-mode-protein)",
@@ -949,10 +963,10 @@ def main() -> None:
     args = maybe_prompt_interactive(args)
     validate_inputs(args)
     methods = parse_alignment_method_option(args.alignment_methods)
-    effective_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
-    trim_states = trim_states_from_strategy(effective_trim_strategy)
+    requested_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
+    effective_trim_strategy, trim_states = force_robustness_trim_strategy(requested_trim_strategy)
     args.trim_strategy = effective_trim_strategy
-    args.use_clipkit = "yes" if "clipkit" in trim_states else "no"
+    args.use_clipkit = "yes"
 
     method_count = max(1, len(methods))
     pathway_count = max(1, len(methods) * len(trim_states))
