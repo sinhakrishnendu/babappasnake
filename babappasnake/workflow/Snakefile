@@ -847,6 +847,8 @@ if HAVE_CDS:
         output:
             provenance=OUTDIR / "summary" / "run_provenance.json"
         run:
+            provenance_path = Path(str(output.provenance))
+            summary_dir = provenance_path.parent
             payload = {
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "outdir": str(OUTDIR.resolve()),
@@ -874,14 +876,14 @@ if HAVE_CDS:
                     "per_pathway_cores": PER_PATHWAY_CORES,
                 },
                 "files": {
-                    "robustness_matrix": str(output.provenance.parent / "robustness_matrix.tsv"),
-                    "robustness_consensus": str(output.provenance.parent / "robustness_consensus.tsv"),
-                    "robustness_narrative": str(output.provenance.parent / "robustness_narrative.txt"),
-                    "comparative_summary": str(output.provenance.parent / "comparative_reproducibility_summary.txt"),
-                    "publication_table_latex": str(output.provenance.parent / "robustness_publication_table.tex"),
-                    "top_level_summary": str(input.top_summary),
-                    "top_level_asr": str(input.top_asr),
+                    "robustness_matrix": str(summary_dir / "robustness_matrix.tsv"),
+                    "robustness_consensus": str(summary_dir / "robustness_consensus.tsv"),
+                    "robustness_narrative": str(summary_dir / "robustness_narrative.txt"),
+                    "comparative_summary": str(summary_dir / "comparative_reproducibility_summary.txt"),
+                    "publication_table_latex": str(summary_dir / "robustness_publication_table.tex"),
+                    "top_level_summary": str(Path(str(input.top_summary))),
+                    "top_level_asr": str(Path(str(input.top_asr))),
                 },
             }
-            output.provenance.parent.mkdir(parents=True, exist_ok=True)
-            output.provenance.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
