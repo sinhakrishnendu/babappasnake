@@ -164,20 +164,17 @@ def classify_signal(
 
 
 def escape_latex(text: str) -> str:
-    out = str(text)
-    replacements = {
-        "\\": r"\\textbackslash{}",
-        "_": r"\\_",
-        "%": r"\\%",
-        "&": r"\\&",
-        "#": r"\\#",
-        "{": r"\\{",
-        "}": r"\\}",
-        "$": r"\\$",
+    mapping = {
+        "\\": r"\textbackslash{}",
+        "_": r"\_",
+        "%": r"\%",
+        "&": r"\&",
+        "#": r"\#",
+        "{": r"\{",
+        "}": r"\}",
+        "$": r"\$",
     }
-    for src, dst in replacements.items():
-        out = out.replace(src, dst)
-    return out
+    return "".join(mapping.get(ch, ch) for ch in str(text))
 
 
 def write_tsv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:

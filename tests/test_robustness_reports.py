@@ -137,3 +137,7 @@ def test_generate_robustness_reports_for_six_method_trim_pathways(tmp_path):
 
     comparative_text = comparative_out.read_text(encoding="utf-8")
     assert "Pathways evaluated (6)" in comparative_text
+
+    latex_text = latex_out.read_text(encoding="utf-8")
+    assert r"aBSREL\_branch" in latex_text
+    assert r"aBSREL\\_branch" not in latex_text
