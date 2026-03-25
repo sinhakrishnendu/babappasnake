@@ -251,7 +251,11 @@ if HAVE_CDS:
                 mkdir -p {OUTDIR}/alignments/babappalign
                 cp {input} {OUTDIR}/alignments/babappalign/orthogroup_proteins.fasta
                 cd {OUTDIR}/alignments/babappalign && \
-                "{BABAPPALIGN}" orthogroup_proteins.fasta --model babappascore --mode protein
+                if "{BABAPPALIGN}" --help 2>&1 | grep -q -- '--model'; then \
+                  "{BABAPPALIGN}" orthogroup_proteins.fasta --model babappascore --mode protein; \
+                else \
+                  "{BABAPPALIGN}" orthogroup_proteins.fasta --mode protein; \
+                fi
                 test -f {output.aln}
                 '''
 
@@ -268,7 +272,11 @@ if HAVE_CDS:
                 mkdir -p {OUTDIR}/alignments/babappalign
                 cp {input} {OUTDIR}/alignments/babappalign/mapped_orthogroup_cds.fasta
                 cd {OUTDIR}/alignments/babappalign && \
-                "{BABAPPALIGN}" mapped_orthogroup_cds.fasta --model babappascore --mode codon
+                if "{BABAPPALIGN}" --help 2>&1 | grep -q -- '--model'; then \
+                  "{BABAPPALIGN}" mapped_orthogroup_cds.fasta --model babappascore --mode codon; \
+                else \
+                  "{BABAPPALIGN}" mapped_orthogroup_cds.fasta --mode codon; \
+                fi
                 test -f {output.protein_aln}
                 test -f {output.codon_aln}
                 '''
