@@ -21,7 +21,8 @@ In terminal mode, it can run as an interactive guided engine instead of a black-
 11. Selects foreground branches from aBSREL using dynamic thresholding.
 12. Runs branch-site `codeml` only for selected branches (alt and null models) per pathway.
 13. Runs codeml ancestral sequence reconstruction (ASR) per pathway.
-14. Produces pathway-level summaries plus robustness reports across both alignment method and trimming decision.
+14. Automatically maps confirmed branch-site-selected branches to canonical parent/child nodes and extracts ancestor/descendant CDS+AA sequences plus branch substitutions.
+15. Produces pathway-level summaries plus robustness reports across both alignment method and trimming decision.
 
 ## Installation (for end users)
 
@@ -81,6 +82,7 @@ babappasnake
 ```
 
 This mode prompts for pipeline settings, executes one rule at a time, asks `run/skip/stop` at every step, and prints per-step output previews.
+If all outputs of a step already exist, guided mode auto-skips that step and continues.
 It asks for CDS only after `rbh_orthogroup` finishes, then asks optional outgroup text for rooting.
 It also prints explicit orthogroup membership in terminal: groups included and groups omitted at RBH stage.
 If outgroup is left empty, rooting is safely skippable in guided mode and downstream uses unrooted IQ-TREE trees.
@@ -178,8 +180,37 @@ Most important files:
 - `hyphy/<method>/<trim_state>/significant_foregrounds.tsv`: selected aBSREL foreground branches.
 - `branchsite/<method>/<trim_state>/branchsite_results.tsv`: codeml branch-site statistics and BH significance.
 - `asr/<method>/<trim_state>/asr_done.json`: pathway ASR completion record.
+- `asr/branch_to_nodes.tsv`: canonical selected-branch edge mapping (`parent_node -> child_node`) with status/notes.
+- `asr/ancestor_sequences_cds.fasta`: recovered ancestral CDS for selected-branch parent nodes.
+- `asr/ancestor_sequences_aa.fasta`: translated ancestral amino-acid sequences.
+- `asr/descendant_sequences_cds.fasta`: descendant CDS for selected-branch child nodes.
+- `asr/descendant_sequences_aa.fasta`: translated descendant amino-acid sequences.
+- `asr/branch_substitutions.tsv`: codon-by-codon parent/child changes with synonymous/nonsynonymous labels and MEME/BEB overlap flags.
+- `asr/selected_branch_asr_summary.tsv`: per-selected-branch change counts and recovery status.
+- `asr/asr_extraction_provenance.json`: ASR extraction provenance (PAML version, hashes, mapping scheme).
 - `tree/<method>/<trim_state>/orthogroup.treefile`: pathway inferred ML tree (unrooted IQ-TREE output).
 - `tree/<method>/<trim_state>/orthogroup.rooted.treefile`: pathway rooted tree used downstream.
+
+## Selected-branch ancestor extraction
+
+The `extract_selected_branch_ancestors` stage runs after final branch-site selection.
+For each selected foreground branch in each `(method, trim_state)` pathway:
+
+- the rooted pathway tree is parsed and internal nodes are deterministically labeled (`N1..Nn`);
+- foreground labels are mapped to canonical branch edges (`parent_node_id`, `child_node_id`);
+- codeml `rst` sequences are used to recover ancestral parent-node CDS;
+- child-node CDS is taken from observed tip CDS (tip child) or reconstructed `rst` node (internal child);
+- codon/AA substitutions are reported per site.
+
+Validation behavior:
+
+- node mapping must resolve to exactly one edge; ambiguous mappings are marked failed with explicit notes;
+- codeml/PAML version is checked and recorded in provenance;
+- if pathway ASR files are missing, ASR is run automatically once per pathway and reused for all selected branches.
+
+Interpretation caveat:
+
+- recovered ancestral sequences are model-based estimates from codeml ASR, not directly observed sequences.
 
 ## CLI reference
 

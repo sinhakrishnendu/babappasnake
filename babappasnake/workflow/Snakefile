@@ -169,6 +169,14 @@ if HAVE_CDS:
             OUTDIR / "summary" / "robustness_publication_table.tex",
             OUTDIR / "summary" / "run_provenance.json",
             OUTDIR / "summary" / "episodic_selection_summary.txt",
+            OUTDIR / "asr" / "branch_to_nodes.tsv",
+            OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
+            OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
+            OUTDIR / "asr" / "descendant_sequences_cds.fasta",
+            OUTDIR / "asr" / "descendant_sequences_aa.fasta",
+            OUTDIR / "asr" / "branch_substitutions.tsv",
+            OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+            OUTDIR / "asr" / "asr_extraction_provenance.json",
             expand(
                 OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
                 method=ALIGNMENT_METHODS,
@@ -522,6 +530,50 @@ if HAVE_CDS:
             rules.codeml_asr_all_pathways.input
 
 
+    rule extract_selected_branch_ancestors:
+        input:
+            branchsite=expand(
+                OUTDIR / "branchsite" / "{method}" / "{trim_state}" / "branchsite_results.tsv",
+                method=ALIGNMENT_METHODS,
+                trim_state=TRIM_STATES,
+            ),
+            trees=expand(
+                OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
+                method=ALIGNMENT_METHODS,
+                trim_state=TRIM_STATES,
+            ),
+            alignments=expand(
+                OUTDIR / "alignments" / "{method}" / "{trim_state}" / "mapped_orthogroup_cds.analysis.fasta",
+                method=ALIGNMENT_METHODS,
+                trim_state=TRIM_STATES,
+            ),
+        output:
+            branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
+            anc_cds=OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
+            anc_aa=OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
+            desc_cds=OUTDIR / "asr" / "descendant_sequences_cds.fasta",
+            desc_aa=OUTDIR / "asr" / "descendant_sequences_aa.fasta",
+            substitutions=OUTDIR / "asr" / "branch_substitutions.tsv",
+            summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+            provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
+        params:
+            pathways=",".join(PATHWAY_LABELS),
+            meme_p=MEME_P,
+        log:
+            OUTDIR / "logs" / "extract_selected_branch_ancestors.log"
+        shell:
+            r'''
+            mkdir -p {OUTDIR}/asr
+            mkdir -p {OUTDIR}/logs
+            python -m babappasnake.scripts.extract_selected_branch_ancestors \
+              --outdir {OUTDIR:q} \
+              --pathways {params.pathways:q} \
+              --codeml {CODEML:q} \
+              --codonfreq {CODEML_CODONFREQ} \
+              --meme-p {params.meme_p} > {log} 2>&1
+            '''
+
+
     rule hyphy_exploratory_pathway:
         input:
             aln=pathway_cds_alignment,
@@ -847,6 +899,9 @@ if HAVE_CDS:
             latex=OUTDIR / "summary" / "robustness_publication_table.tex",
             top_summary=OUTDIR / "summary" / "episodic_selection_summary.txt",
             top_asr=OUTDIR / "asr" / "asr_done.json",
+            asr_branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
+            asr_summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+            asr_provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
         output:
             provenance=OUTDIR / "summary" / "run_provenance.json"
         run:
@@ -886,6 +941,9 @@ if HAVE_CDS:
                     "publication_table_latex": str(summary_dir / "robustness_publication_table.tex"),
                     "top_level_summary": str(Path(str(input.top_summary))),
                     "top_level_asr": str(Path(str(input.top_asr))),
+                    "asr_branch_to_nodes": str(Path(str(input.asr_branch_nodes))),
+                    "asr_selected_branch_summary": str(Path(str(input.asr_summary))),
+                    "asr_extraction_provenance": str(Path(str(input.asr_provenance))),
                 },
             }
             summary_dir.mkdir(parents=True, exist_ok=True)

@@ -678,6 +678,20 @@ def build_step_plan(have_cds: bool, methods: list[str], trim_states: list[str]) 
                 ),
             ),
             StepSpec(
+                "extract_selected_branch_ancestors",
+                "Map selected branches to parent/child nodes and recover ancestral/descendant sequences with substitutions.",
+                (
+                    "asr/branch_to_nodes.tsv",
+                    "asr/ancestor_sequences_cds.fasta",
+                    "asr/ancestor_sequences_aa.fasta",
+                    "asr/descendant_sequences_cds.fasta",
+                    "asr/descendant_sequences_aa.fasta",
+                    "asr/branch_substitutions.tsv",
+                    "asr/selected_branch_asr_summary.tsv",
+                    "asr/asr_extraction_provenance.json",
+                ),
+            ),
+            StepSpec(
                 "final_summary_all_pathways",
                 "Write pathway-specific episodic selection summaries.",
                 tuple(
@@ -771,11 +785,13 @@ def run_guided_step(
         print(f"\nStep {index}/{total}: {step.rule}")
     print(step.description)
     existing = tuple((outdir / rel).exists() for rel in step.outputs)
+    if all(existing):
+        print("All expected outputs for this step already exist. Auto-skipping.")
+        print_step_outputs(outdir, step.outputs)
+        return 0
     can_skip = all(existing) or force_can_skip
     if can_skip:
-        if all(existing):
-            print("All expected outputs for this step already exist.")
-        elif force_can_skip:
+        if force_can_skip:
             print("This step is skippable in the current context.")
     action = prompt_step_action(can_skip=can_skip)
     if action == "stop":
