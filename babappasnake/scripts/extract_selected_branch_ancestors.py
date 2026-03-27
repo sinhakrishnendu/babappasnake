@@ -202,6 +202,39 @@ def parse_meme_sites(meme_json: Path, threshold: float) -> set[int]:
     return sites
 
 
+def parse_beb_sites(mlc_alt: Path) -> set[int]:
+    if not mlc_alt.exists() or mlc_alt.stat().st_size == 0:
+        return set()
+    lines = mlc_alt.read_text(encoding="utf-8", errors="ignore").splitlines()
+    in_beb = False
+    sites: set[int] = set()
+    for raw in lines:
+        line = raw.strip()
+        low = line.lower()
+        if "bayes empirical bayes" in low:
+            in_beb = True
+            continue
+        if not in_beb:
+            continue
+        if not line:
+            continue
+        if low.startswith("the grid") or low.startswith("naive empirical bayes"):
+            continue
+        if line.startswith("Positively selected sites"):
+            continue
+        m = re.match(r"^\s*(\d+)\s+\S+\s+([0-9]*\.?[0-9]+)(\*+)?", raw)
+        if not m:
+            if sites and ("time used" in low or "tree length" in low):
+                break
+            continue
+        site = int(m.group(1))
+        prob = float(m.group(2))
+        star = m.group(3) or ""
+        if star or prob >= 0.95:
+            sites.add(site)
+    return sites
+
+
 def extract_numbered_tree_from_rst(rst_path: Path):
     lines = rst_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     for i, line in enumerate(lines):
@@ -524,6 +557,10 @@ def main() -> None:
             status = "ok"
             notes = ""
             try:
+                safe_fg = raw_fg.replace("/", "_")
+                beb_sites = parse_beb_sites(
+                    outdir / "branchsite" / method / trim_state / "trees" / safe_fg / "alt" / "mlc_alt.txt"
+                )
                 child, child_type, resolved_note = resolve_child_label(tree, raw_fg)
                 parent = parent_map.get(child)
                 if parent is None:
@@ -606,7 +643,9 @@ def main() -> None:
                         else:
                             n_non += 1
                     overlaps_meme = "yes" if (i + 1) in meme_sites else "no"
-                    overlaps_beb = "no"
+                    overlaps_beb = "yes" if (i + 1) in beb_sites else "no"
+                    if overlaps_beb == "yes" and change_type in {"synonymous", "nonsynonymous"}:
+                        n_beb += 1
                     if overlaps_meme == "yes" and change_type in {"synonymous", "nonsynonymous"}:
                         n_meme += 1
 

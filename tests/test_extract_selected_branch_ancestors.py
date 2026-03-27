@@ -26,7 +26,12 @@ def _write_fasta(path: Path, records: dict[str, str]) -> None:
     _write(path, "\n".join(lines) + "\n")
 
 
-def _seed_common(tmp_path: Path, tree_newick: str, branch_rows: list[tuple[str, str]]) -> Path:
+def _seed_common(
+    tmp_path: Path,
+    tree_newick: str,
+    branch_rows: list[tuple[str, str]],
+    beb_by_foreground: dict[str, list[int]] | None = None,
+) -> Path:
     outdir = tmp_path / "run"
 
     _write(
@@ -59,6 +64,16 @@ def _seed_common(tmp_path: Path, tree_newick: str, branch_rows: list[tuple[str, 
             "((A:0.1,B:0.1)5:0.2,C:0.1)6;\n"
         ),
     )
+    for foreground, sites in (beb_by_foreground or {}).items():
+        safe = foreground.replace("/", "_")
+        lines = ["Bayes Empirical Bayes (BEB) analysis", "Positively selected sites"]
+        for site in sites:
+            lines.append(f"{site:4d} A 0.990*")
+        lines.append("Time used: 0")
+        _write(
+            outdir / "branchsite" / METHOD / TRIM / "trees" / safe / "alt" / "mlc_alt.txt",
+            "\n".join(lines) + "\n",
+        )
     return outdir
 
 
@@ -136,3 +151,19 @@ def test_successful_extraction_writes_ancestor_descendant_fastas(tmp_path):
     anc = list(SeqIO.parse(outdir / "asr" / "ancestor_sequences_cds.fasta", "fasta"))
     desc = list(SeqIO.parse(outdir / "asr" / "descendant_sequences_cds.fasta", "fasta"))
     assert anc and desc
+
+
+def test_beb_overlap_sites_are_reported(tmp_path):
+    outdir = _seed_common(
+        tmp_path,
+        "((A:0.1,B:0.1)cladeAB:0.2,C:0.1)root:0.0;",
+        [("cladeAB", "True")],
+        beb_by_foreground={"cladeAB": [3]},
+    )
+    _run_extractor(outdir)
+    subs = _read_tsv(outdir / "asr" / "branch_substitutions.tsv")
+    hit = [
+        row for row in subs
+        if row["foreground_label_canonical"].startswith("lineage:") and row["codon_site"] == "3"
+    ]
+    assert hit and hit[0]["overlaps_beb_site"] == "yes"
