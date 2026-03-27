@@ -33,15 +33,17 @@ def _seed_common(
     beb_by_foreground: dict[str, list[int]] | None = None,
 ) -> Path:
     outdir = tmp_path / "run"
+    tree_path = outdir / "tree" / METHOD / TRIM / "orthogroup.rooted.treefile"
+    aln_path = outdir / "alignments" / METHOD / TRIM / "mapped_orthogroup_cds.analysis.fasta"
 
     _write(
         outdir / "branchsite" / METHOD / TRIM / "branchsite_results.tsv",
         "foreground_branch\tLRT\tp_value\tq_value\tsignificant_BH_0.05\n"
         + "".join(f"{fg}\t10.0\t0.001\t0.01\t{sig}\n" for fg, sig in branch_rows),
     )
-    _write(outdir / "tree" / METHOD / TRIM / "orthogroup.rooted.treefile", tree_newick + "\n")
+    _write(tree_path, tree_newick + "\n")
     _write_fasta(
-        outdir / "alignments" / METHOD / TRIM / "mapped_orthogroup_cds.analysis.fasta",
+        aln_path,
         {
             "A": "ATGAAAACCTAA",
             "B": "ATGAAAATCTAA",
@@ -53,7 +55,15 @@ def _seed_common(
         json.dumps({"results": [{"site": 2, "p-value": 0.01}]}) + "\n",
     )
     _write(outdir / "asr" / METHOD / TRIM / "mlc_asr.txt", "mlc\n")
-    _write(outdir / "asr" / METHOD / TRIM / "codeml_asr.ctl", "RateAncestor = 1\n")
+    _write(
+        outdir / "asr" / METHOD / TRIM / "codeml_asr.ctl",
+        (
+            f"seqfile = {aln_path.resolve()}\n"
+            f"treefile = {tree_path.resolve()}\n"
+            "CodonFreq = 7\n"
+            "RateAncestor = 1\n"
+        ),
+    )
     _write(
         outdir / "asr" / METHOD / TRIM / "rst",
         (

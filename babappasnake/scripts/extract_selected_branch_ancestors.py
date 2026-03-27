@@ -406,11 +406,29 @@ def ensure_asr(pathway: Pathway, outdir: Path, codeml: str, codonfreq: int) -> t
     rst = asr_dir / "rst"
     mlc = asr_dir / "mlc_asr.txt"
     ctl = asr_dir / "codeml_asr.ctl"
-    if rst.exists() and mlc.exists():
-        return asr_dir, rst, mlc
-
     aln = outdir / "alignments" / pathway.method / pathway.trim_state / "mapped_orthogroup_cds.analysis.fasta"
     tree = outdir / "tree" / pathway.method / pathway.trim_state / "orthogroup.rooted.treefile"
+    expected_seqfile = str(aln.resolve())
+    expected_treefile = str(tree.resolve())
+
+    def _ctl_matches() -> bool:
+        if not ctl.exists():
+            return False
+        values: dict[str, str] = {}
+        for raw in ctl.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            values[key.strip().lower()] = value.strip()
+        return (
+            values.get("seqfile") == expected_seqfile
+            and values.get("treefile") == expected_treefile
+            and str(values.get("codonfreq", "")).strip() == str(int(codonfreq))
+        )
+
+    if rst.exists() and mlc.exists() and _ctl_matches():
+        return asr_dir, rst, mlc
+
     cmd = [
         sys.executable,
         "-m",
