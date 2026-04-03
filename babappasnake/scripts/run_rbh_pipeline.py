@@ -4,10 +4,14 @@ from __future__ import annotations
 import argparse
 import csv
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict
 
 from Bio import SeqIO
+
+
+FASTA_EXTENSIONS = {".fa", ".faa", ".fasta"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +31,65 @@ def run_cmd(cmd: list[str]) -> None:
     result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed:\n{' '.join(cmd)}\n\nSTDERR:\n{result.stderr}")
+
+
+def _warn_skip(path: Path, reason: str) -> None:
+    print(f"[WARN] Skipping proteome file '{path}': {reason}", file=sys.stderr)
+
+
+def _fasta_sanity_issue(path: Path) -> str | None:
+    try:
+        if path.stat().st_size == 0:
+            return "empty file"
+    except OSError as exc:
+        return f"unreadable file ({exc})"
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith(">"):
+                    return None
+                return "first non-empty line does not start with '>'"
+    except OSError as exc:
+        return f"unreadable file ({exc})"
+
+    return "no non-empty lines"
+
+
+def looks_like_fasta(path: Path) -> bool:
+    return _fasta_sanity_issue(path) is None
+
+
+def discover_proteome_fastas(proteomes_dir: Path) -> list[Path]:
+    if not proteomes_dir.is_dir():
+        raise FileNotFoundError(f"Proteomes directory not found: {proteomes_dir}")
+
+    discovered: list[Path] = []
+    for path in sorted(proteomes_dir.iterdir()):
+        name = path.name
+        if not path.is_file():
+            continue
+        if name.startswith(".") or name.startswith("._") or name == ".DS_Store":
+            _warn_skip(path, "hidden/macOS metadata file")
+            continue
+        if path.suffix.lower() not in FASTA_EXTENSIONS:
+            _warn_skip(path, f"unsupported extension '{path.suffix}'")
+            continue
+        issue = _fasta_sanity_issue(path)
+        if issue is not None:
+            _warn_skip(path, issue)
+            continue
+        discovered.append(path)
+
+    if not discovered:
+        raise FileNotFoundError(
+            f"No valid proteome FASTA files found in {proteomes_dir}. "
+            "Expected .fa/.faa/.fasta files with FASTA headers and non-empty content."
+        )
+    return discovered
 
 
 def make_blast_db(fasta: Path, makeblastdb_exe: str) -> str:
@@ -73,9 +136,7 @@ def reciprocal_best_hits(fwd: Dict[str, str], rev: Dict[str, str]) -> Dict[str, 
 def choose_single_copy_rbh(query_fasta: Path, proteomes_dir: Path, outdir: Path, coverage: float, evalue: float, threads: int, blastp_exe: str, makeblastdb_exe: str) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     qdb = make_blast_db(query_fasta, makeblastdb_exe)
-    species_fastas = [p for p in sorted(proteomes_dir.iterdir()) if p.suffix.lower() in {".faa", ".fa", ".fasta", ".fpep", ".protein"}]
-    if not species_fastas:
-        raise FileNotFoundError("No proteome FASTA files found.")
+    species_fastas = discover_proteome_fastas(proteomes_dir)
 
     query_records = list(SeqIO.parse(str(query_fasta), "fasta"))
     if len(query_records) != 1:
