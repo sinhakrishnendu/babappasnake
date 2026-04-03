@@ -1,4 +1,5 @@
-# babappasnake
+# BABAPPASnake
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048331.svg)](https://doi.org/10.5281/zenodo.19048331)
 
 `babappasnake` is a command-line workflow for episodic positive selection analysis on a single orthogroup.
 It is designed for practical use: one command to launch, automatic checkpointing, resumable execution, and clear summary outputs.
