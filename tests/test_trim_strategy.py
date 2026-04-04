@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 
+import pytest
 import yaml
 
 from babappasnake import cli
@@ -22,6 +23,14 @@ def test_trim_strategy_to_trim_states():
     assert cli.trim_states_from_strategy("raw") == ["raw"]
     assert cli.trim_states_from_strategy("clipkit") == ["clipkit"]
     assert cli.trim_states_from_strategy("both") == ["raw", "clipkit"]
+
+
+def test_recombination_mode_alias_and_validation():
+    assert cli.parse_recombination_mode("none") == "none"
+    assert cli.parse_recombination_mode("gard") == "gard"
+    assert cli.parse_recombination_mode("auto") == "auto"
+    assert cli.effective_recombination_mode("auto") == "gard"
+    assert cli.effective_recombination_mode("gard") == "gard"
 
 
 def test_all_three_methods_with_both_trim_states_produces_six_unique_pathways():
@@ -58,6 +67,9 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
         codeml_codonfreq=7,
         clipkit_mode_protein="kpic-smart-gap",
         clipkit_mode_codon="kpic-smart-gap",
+        recombination="none",
+        gard_mode="Faster",
+        gard_rate_classes=3,
         absrel_p=0.05,
         absrel_dynamic_start=0.05,
         absrel_dynamic_step=0.01,
@@ -87,6 +99,9 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     assert cfg["trim_strategy"] == "both"
     assert cfg["trim_states"] == ["raw", "clipkit"]
     assert cfg["use_clipkit"] is True
+    assert cfg["recombination"] == "none"
+    assert cfg["gard_mode"] == "Faster"
+    assert cfg["gard_rate_classes"] == 3
     assert cfg["per_method_cores"] == 4
     assert cfg["per_pathway_cores"] == 2
 
@@ -99,6 +114,33 @@ def test_force_robustness_trim_strategy_always_returns_both():
     strategy, states = cli.force_robustness_trim_strategy("clipkit")
     assert strategy == "both"
     assert states == ["raw", "clipkit"]
+
+
+def test_build_step_plan_includes_gard_step_when_requested():
+    steps = cli.build_step_plan(
+        have_cds=True,
+        methods=["babappalign"],
+        trim_states=["raw", "clipkit"],
+        recombination_mode="gard",
+    )
+    rules = [s.rule for s in steps]
+    assert "gard_all_pathways" in rules
+
+    steps_no_gard = cli.build_step_plan(
+        have_cds=True,
+        methods=["babappalign"],
+        trim_states=["raw", "clipkit"],
+        recombination_mode="none",
+    )
+    rules_no_gard = [s.rule for s in steps_no_gard]
+    assert "gard_all_pathways" not in rules_no_gard
+
+
+def test_validate_recombination_tools_requires_hyphy_for_gard():
+    cli.validate_recombination_tools("none", {})
+    cli.validate_recombination_tools("gard", {"hyphy": "/usr/bin/hyphy"})
+    with pytest.raises(SystemExit):
+        cli.validate_recombination_tools("gard", {})
 
 
 def test_validate_orthogroup_method_tools_rbh_requires_blast_tools():

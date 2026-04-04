@@ -18,6 +18,9 @@ iqtree_bnni: false
 absrel_branches: "Leaves"
 meme_branches: "Leaves"
 codeml_codonfreq: 7
+recombination: none
+gard_mode: "Faster"
+gard_rate_classes: 3
 use_clipkit: true
 clipkit_mode_protein: "kpic-smart-gap"
 clipkit_mode_codon: "kpic-smart-gap"

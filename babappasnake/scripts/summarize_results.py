@@ -52,6 +52,7 @@ def main() -> None:
     p.add_argument("--absrel-meta", required=False)
     p.add_argument("--branchsite", required=True)
     p.add_argument("--hyphy-dir", required=True)
+    p.add_argument("--gard-summary", required=False, default="")
     p.add_argument("--out", required=True)
     p.add_argument("--method", default="")
     p.add_argument("--trim-state", default="")
@@ -117,6 +118,26 @@ def main() -> None:
     lines.append(f"Method: {a.method or 'NA'}")
     lines.append(f"Trim state: {a.trim_state or 'NA'}")
     lines.append(f"MEME threshold: {a.meme_p}")
+    lines.append("")
+    lines.append("Optional recombination screening (HyPhy GARD)")
+    lines.append("-" * 44)
+    gard_path = Path(str(a.gard_summary).strip()) if str(a.gard_summary).strip() else None
+    if gard_path and gard_path.exists() and gard_path.stat().st_size > 0:
+        try:
+            gard = json.loads(gard_path.read_text(encoding="utf-8"))
+            lines.append(f"GARD status: {gard.get('status', 'NA')}")
+            lines.append(f"GARD breakpoints detected: {gard.get('breakpoints_detected', 'NA')}")
+            lines.append(f"GARD breakpoint count: {gard.get('n_breakpoints', 'NA')}")
+            note = str(gard.get("note", "")).strip()
+            if note:
+                lines.append(f"Note: {note}")
+        except Exception:
+            lines.append("GARD summary exists but could not be parsed.")
+    else:
+        lines.append("GARD not run for this pathway (default workflow behavior).")
+    lines.append(
+        "Caution: branch-site and downstream statistics reflect the full-length default pathway unless explicit fragment-aware routing is implemented."
+    )
     Path(a.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

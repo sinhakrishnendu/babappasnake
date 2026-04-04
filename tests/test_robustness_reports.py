@@ -127,6 +127,8 @@ def test_generate_robustness_reports_for_six_method_trim_pathways(tmp_path):
     assert len({(row["method"], row["trim_state"]) for row in matrix_rows}) == 6
     assert len({row["pathway"] for row in matrix_rows}) == 6
     assert all(row["status"] == "ok" for row in matrix_rows)
+    assert all(row["gard_run"] == "no" for row in matrix_rows)
+    assert all(row["gard_status"] == "not_run" for row in matrix_rows)
 
     with open(consensus_out, encoding="utf-8") as fh:
         consensus_rows = list(csv.DictReader(fh, delimiter="\t"))

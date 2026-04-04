@@ -40,6 +40,8 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
 }
 ORTHOGROUP_METHOD_CHOICES = ("rbh", "orthofinder")
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
+RECOMBINATION_CHOICES = ("none", "gard", "auto")
+GARD_MODE_CHOICES = ("Normal", "Faster")
 FORCED_TRIM_STRATEGY = "both"
 FORCED_TRIM_STATES = ["raw", "clipkit"]
 DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
@@ -219,6 +221,20 @@ def parse_trim_strategy(raw: object) -> str:
     return strategy
 
 
+def parse_recombination_mode(raw: object) -> str:
+    mode = str(raw).strip().lower()
+    if mode not in RECOMBINATION_CHOICES:
+        raise SystemExit(
+            "Invalid --recombination option. Choose one of: none, gard, auto"
+        )
+    return mode
+
+
+def effective_recombination_mode(raw: object) -> str:
+    mode = parse_recombination_mode(raw)
+    return "gard" if mode == "auto" else mode
+
+
 def derive_trim_strategy(trim_strategy: str | None, use_clipkit: str) -> str:
     if trim_strategy:
         return parse_trim_strategy(trim_strategy)
@@ -318,6 +334,43 @@ def prompt_trim_strategy(default: str) -> str:
         print("Invalid selection.")
 
 
+def prompt_recombination_mode(default: str) -> str:
+    print("Recombination screening (--recombination)")
+    options = (
+        ("1", "none", "none (default behavior: skip GARD)"),
+        ("2", "gard", "run HyPhy GARD screening"),
+        ("3", "auto", "auto (currently alias of gard)"),
+    )
+    for key, mode, label in options:
+        mark = " (default)" if mode == default else ""
+        print(f"  {key}. {label}{mark}")
+    while True:
+        value = input("Select option (1/2/3) or press Enter for default: ").strip().lower()
+        if not value:
+            return default
+        if value in {"1", "2", "3"}:
+            return options[int(value) - 1][1]
+        if value in RECOMBINATION_CHOICES:
+            return value
+        print("Invalid selection.")
+
+
+def prompt_gard_mode(default: str) -> str:
+    print("HyPhy GARD mode (--gard-mode)")
+    for idx, mode in enumerate(GARD_MODE_CHOICES, start=1):
+        mark = " (default)" if mode == default else ""
+        print(f"  {idx}. {mode}{mark}")
+    while True:
+        value = input("Select option (1/2) or press Enter for default: ").strip()
+        if not value:
+            return default
+        if value in {"1", "2"}:
+            return GARD_MODE_CHOICES[int(value) - 1]
+        if value in GARD_MODE_CHOICES:
+            return value
+        print("Invalid selection.")
+
+
 def validate_selected_alignment_tools(
     methods: list[str],
     trim_states: list[str],
@@ -360,6 +413,14 @@ def validate_orthogroup_method_tools(method: str, resolved_tools: dict[str, str]
     raise SystemExit(f"Unsupported orthogroup method: {method}")
 
 
+def validate_recombination_tools(mode: str, resolved_tools: dict[str, str]) -> None:
+    normalized = effective_recombination_mode(mode)
+    if normalized == "gard" and "hyphy" not in resolved_tools:
+        raise SystemExit(
+            "Recombination mode 'gard' requires HyPhy on PATH, but it was not found."
+        )
+
+
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if args.interactive == "no":
         return args
@@ -384,6 +445,13 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(
         "Trimming strategy: both (raw + ClipKIT branches) [enforced for robustness summaries]."
     )
+    args.recombination = prompt_recombination_mode(str(args.recombination))
+    if effective_recombination_mode(args.recombination) == "gard":
+        args.gard_mode = prompt_gard_mode(str(args.gard_mode))
+        args.gard_rate_classes = prompt_int(
+            "HyPhy GARD rate classes (--gard-rate-classes)",
+            int(args.gard_rate_classes),
+        )
     if "clipkit" in trim_states:
         args.clipkit_mode_protein = prompt_choice(
             "ClipKIT protein mode (--clipkit-mode-protein)",
@@ -432,6 +500,10 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
     print(f"- trim_strategy: {args.trim_strategy}")
     print(f"- pathways: {', '.join(enumerate_pathways(parse_alignment_method_option(args.alignment_methods), trim_states))}")
+    print(f"- recombination: {args.recombination} (effective: {effective_recombination_mode(args.recombination)})")
+    if effective_recombination_mode(args.recombination) == "gard":
+        print(f"- gard_mode: {args.gard_mode}")
+        print(f"- gard_rate_classes: {args.gard_rate_classes}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
     print("- orthofinder_fallback: always compare RBH vs OrthoFinder by 1:1 ortholog count")
@@ -490,6 +562,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--meme-branches", default="Leaves", help="HyPhy MEME branches selector [default: Leaves]")
     p.add_argument("--codeml-codonfreq", type=int, default=7, help="codeml CodonFreq value [default: 7]")
     p.add_argument(
+        "--recombination",
+        choices=list(RECOMBINATION_CHOICES),
+        default="none",
+        help="Optional recombination screening mode: none, gard, or auto (currently alias of gard) [default: none]",
+    )
+    p.add_argument(
+        "--gard-mode",
+        choices=list(GARD_MODE_CHOICES),
+        default="Faster",
+        help="HyPhy GARD mode when recombination screening is enabled [default: Faster]",
+    )
+    p.add_argument(
+        "--gard-rate-classes",
+        type=int,
+        default=3,
+        help="HyPhy GARD rate classes when recombination screening is enabled [default: 3]",
+    )
+    p.add_argument(
         "--trim-strategy",
         choices=list(TRIM_STRATEGY_CHOICES),
         default=None,
@@ -543,6 +633,9 @@ def validate_inputs(args: argparse.Namespace) -> None:
             "Choose one of: rbh, orthofinder"
         )
     parse_trim_strategy(derive_trim_strategy(args.trim_strategy, args.use_clipkit))
+    parse_recombination_mode(args.recombination)
+    if int(args.gard_rate_classes) < 1:
+        raise SystemExit("--gard-rate-classes must be >= 1")
 
 
 def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
@@ -590,6 +683,9 @@ def write_config(
         "absrel_branches": str(args.absrel_branches).strip() or "Leaves",
         "meme_branches": str(args.meme_branches).strip() or "Leaves",
         "codeml_codonfreq": int(args.codeml_codonfreq),
+        "recombination": effective_recombination_mode(args.recombination),
+        "gard_mode": str(args.gard_mode).strip() or "Faster",
+        "gard_rate_classes": int(args.gard_rate_classes),
         "use_clipkit": "clipkit" in trim_states,
         "clipkit_mode_protein": str(args.clipkit_mode_protein).strip(),
         "clipkit_mode_codon": str(args.clipkit_mode_codon).strip(),
@@ -635,7 +731,12 @@ def run_snakemake_target(config_path: Path, cores: int, target: str, snake_args:
     return result.returncode
 
 
-def build_step_plan(have_cds: bool, methods: list[str], trim_states: list[str]) -> list[StepSpec]:
+def build_step_plan(
+    have_cds: bool,
+    methods: list[str],
+    trim_states: list[str],
+    recombination_mode: str,
+) -> list[StepSpec]:
     pathways = enumerate_pathways(methods, trim_states)
 
     if not have_cds:
@@ -677,6 +778,20 @@ def build_step_plan(have_cds: bool, methods: list[str], trim_states: list[str]) 
             ),
         ),
     ]
+    run_gard = effective_recombination_mode(recombination_mode) == "gard"
+    if run_gard:
+        steps.append(
+            StepSpec(
+                "gard_all_pathways",
+                "Run optional HyPhy GARD recombination screening for each selected pathway.",
+                tuple(
+                    f"recombination/{method}/{trim_state}/gard/gard_summary.json"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
+            )
+        )
+
     steps.extend(
         [
             StepSpec(
@@ -1008,7 +1123,7 @@ def run_guided_pipeline(
         else:
             print("No outgroup query provided; tree will be left unrooted for downstream use.")
 
-    steps = build_step_plan(have_cds, methods, trim_states)
+    steps = build_step_plan(have_cds, methods, trim_states, args.recombination)
     total_steps = 1 + len(steps)
     print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
@@ -1039,6 +1154,8 @@ def main() -> None:
     args = parse_args()
     args = maybe_prompt_interactive(args)
     validate_inputs(args)
+    args.recombination = parse_recombination_mode(args.recombination)
+    recombination_mode = effective_recombination_mode(args.recombination)
     methods = parse_alignment_method_option(args.alignment_methods)
     requested_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
     effective_trim_strategy, trim_states = force_robustness_trim_strategy(requested_trim_strategy)
@@ -1062,12 +1179,22 @@ def main() -> None:
         f"per_method={per_method_cores}, per_pathway={per_pathway_cores}."
     )
     print("[INFO] Selected pathways: " + ", ".join(enumerate_pathways(methods, trim_states)))
+    print(
+        f"[INFO] Recombination screening mode: {args.recombination} "
+        f"(effective: {recombination_mode})."
+    )
+    if recombination_mode == "gard":
+        print(
+            f"[INFO] GARD parameters: mode={args.gard_mode}, "
+            f"rate_classes={args.gard_rate_classes}."
+        )
 
     resolved, missing = resolve_tools()
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
     validate_orthogroup_method_tools(args.orthogroup_method, resolved)
+    validate_recombination_tools(args.recombination, resolved)
     validate_selected_alignment_tools(methods, trim_states, resolved)
 
     outdir = Path(args.outdir)

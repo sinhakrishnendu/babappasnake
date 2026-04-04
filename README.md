@@ -66,12 +66,13 @@ A complete run performs these stages:
 6. Run both trimming states (`raw` and `clipkit`) for robustness.
 7. Infer trees with IQ-TREE for each `(method, trim_state)` pathway.
 8. Optionally root trees with outgroup text query.
-9. Run HyPhy aBSREL + MEME per pathway.
-10. Select foreground branches dynamically from aBSREL.
-11. Run branch-site codeml per selected foreground.
-12. Run codeml ASR per pathway.
-13. Extract ancestor/descendant sequences and substitutions for selected branches.
-14. Write pathway summaries plus cross-pathway robustness reports.
+9. Optionally run HyPhy GARD recombination screening per pathway.
+10. Run HyPhy aBSREL + MEME per pathway.
+11. Select foreground branches dynamically from aBSREL.
+12. Run branch-site codeml per selected foreground.
+13. Run codeml ASR per pathway.
+14. Extract ancestor/descendant sequences and substitutions for selected branches.
+15. Write pathway summaries plus cross-pathway robustness reports.
 
 ## Installation And Environment
 
@@ -206,6 +207,23 @@ babappasnake \
 
 Use this for scripted runs and HPC wrappers.
 
+### Example: enable optional GARD screening
+
+```bash
+babappasnake \
+  --prot /path/to/proteomes \
+  --query /path/to/query.fasta \
+  --cds /path/to/orthogroup_cds.fasta \
+  --alignment-methods 4 \
+  --recombination gard \
+  --gard-mode Faster \
+  --gard-rate-classes 3 \
+  --outdir run01_gard \
+  --threads 12 \
+  --interactive no \
+  --guided no
+```
+
 ## Two-stage run (no CDS at start)
 
 Stage 1:
@@ -275,6 +293,28 @@ Example for method `4`:
 - Outgroup rooting is optional and applied if query text is supplied and matched.
 - If no outgroup is supplied/matched, downstream continues with unrooted tree.
 
+## Optional recombination screening (HyPhy GARD)
+
+- Controlled by `--recombination {none,gard,auto}` (default: `none`).
+- `none`: skip recombination screening (legacy/default behavior).
+- `gard`: run HyPhy GARD per active `(method, trim_state)` pathway.
+- `auto`: currently an alias of `gard`.
+- Additional controls:
+  - `--gard-mode {Normal,Faster}` (default: `Faster`)
+  - `--gard-rate-classes INT` (default: `3`)
+
+Output locations:
+
+- `recombination/<method>/<trim_state>/gard/gard.json`
+- `recombination/<method>/<trim_state>/gard/gard_summary.json`
+- `recombination/<method>/<trim_state>/gard/gard.stdout.txt`
+- `recombination/<method>/<trim_state>/gard/gard.stderr.txt`
+
+Interpretation note:
+
+- In the current implementation, GARD is a screening/reporting module.
+- Downstream branch-site/codeml analyses remain full-length by default unless explicit fragment-aware routing is added in a future release.
+
 ## HyPhy and branch-site selection
 
 - aBSREL and MEME run per pathway.
@@ -313,6 +353,7 @@ High-value files:
 - `hyphy/<method>/<trim_state>/absrel.json`
 - `hyphy/<method>/<trim_state>/meme.json`
 - `hyphy/<method>/<trim_state>/significant_foregrounds.tsv`
+- `recombination/<method>/<trim_state>/gard/gard_summary.json`
 - `branchsite/<method>/<trim_state>/branchsite_results.tsv`
 - `asr/<method>/<trim_state>/asr_done.json`
 - `asr/branch_to_nodes.tsv`
@@ -366,6 +407,9 @@ Selection and model options:
 - `--absrel-branches TEXT`
 - `--meme-branches TEXT`
 - `--codeml-codonfreq INT`
+- `--recombination {none,gard,auto}`
+- `--gard-mode {Normal,Faster}`
+- `--gard-rate-classes INT`
 - `--absrel-p FLOAT`
 - `--absrel-dynamic-start FLOAT`
 - `--absrel-dynamic-step FLOAT`

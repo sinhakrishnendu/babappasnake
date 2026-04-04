@@ -221,6 +221,7 @@ def main() -> None:
         branchsite_tsv = outdir / "branchsite" / method / trim_state / "branchsite_results.tsv"
         asr_done = outdir / "asr" / method / trim_state / "asr_done.json"
         hyphy_done = outdir / "hyphy" / method / trim_state / "hyphy_done.json"
+        gard_summary = outdir / "recombination" / method / trim_state / "gard" / "gard_summary.json"
 
         n_seq, protein_len = read_fasta_shape(protein_path)
         _, cds_len = read_fasta_shape(cds_path)
@@ -257,6 +258,30 @@ def main() -> None:
                 absrel_cutoff = str(json.loads(absrel_meta.read_text(encoding="utf-8")).get("selected_pcut", "NA"))
             except Exception:
                 absrel_cutoff = "NA"
+
+        gard_run = "no"
+        gard_status = "not_run"
+        gard_breakpoints_detected = "no"
+        gard_n_breakpoints = "NA"
+        gard_note = "GARD not run for this pathway."
+        if gard_summary.exists() and gard_summary.stat().st_size > 0:
+            gard_run = "yes"
+            try:
+                gard_payload = json.loads(gard_summary.read_text(encoding="utf-8"))
+                gard_status = str(gard_payload.get("status", "unknown"))
+                bkp = gard_payload.get("breakpoints_detected", False)
+                gard_breakpoints_detected = "yes" if bool(bkp) else "no"
+                n_bkp = gard_payload.get("n_breakpoints", None)
+                if n_bkp is None:
+                    gard_n_breakpoints = "NA"
+                else:
+                    gard_n_breakpoints = str(n_bkp)
+                gard_note = str(gard_payload.get("note", "")).strip() or gard_note
+            except Exception:
+                gard_status = "parse_unavailable"
+                gard_breakpoints_detected = "no"
+                gard_n_breakpoints = "NA"
+                gard_note = "GARD summary exists but could not be parsed."
 
         missing = []
         required_map = {
@@ -310,6 +335,12 @@ def main() -> None:
                 "status": status,
                 "absrel_threshold": absrel_cutoff,
                 "meme_threshold": str(a.meme_p),
+                "gard_run": gard_run,
+                "gard_status": gard_status,
+                "gard_breakpoints_detected": gard_breakpoints_detected,
+                "gard_n_breakpoints": gard_n_breakpoints,
+                "gard_summary_path": str(gard_summary.resolve()) if gard_summary.exists() else "",
+                "gard_note": gard_note,
             }
         )
 
@@ -332,6 +363,12 @@ def main() -> None:
         "status",
         "absrel_threshold",
         "meme_threshold",
+        "gard_run",
+        "gard_status",
+        "gard_breakpoints_detected",
+        "gard_n_breakpoints",
+        "gard_summary_path",
+        "gard_note",
     ]
     write_tsv(Path(a.matrix_out), matrix_fields, matrix_rows)
 
@@ -462,6 +499,20 @@ def main() -> None:
     trim_sensitive = [row for row in consensus_rows if row["interpretation"] == "trim_sensitive"]
 
     narrative.append("")
+    narrative.append("Optional recombination screening (GARD)")
+    narrative.append("-" * 39)
+    gard_rows = [row for row in matrix_rows if row.get("gard_run") == "yes"]
+    if gard_rows:
+        with_breakpoints = [row for row in gard_rows if row.get("gard_breakpoints_detected") == "yes"]
+        narrative.append(f"- pathways screened with GARD: {len(gard_rows)}")
+        narrative.append(f"- pathways with detected breakpoints: {len(with_breakpoints)}")
+    else:
+        narrative.append("- GARD screening was not requested for this run.")
+    narrative.append(
+        "- downstream branch-site results in this implementation remain full-length by default; GARD is a screening/reporting module unless fragment-aware routing is explicitly added."
+    )
+    narrative.append("")
+
     narrative.append("Overall interpretation")
     narrative.append(f"- highly robust signals across alignment + trimming: {len(highly)}")
     narrative.append(f"- method-sensitive signals: {len(method_sensitive)}")

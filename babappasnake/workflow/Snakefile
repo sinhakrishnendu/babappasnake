@@ -25,6 +25,23 @@ IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
 CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
+RECOMBINATION_MODE = str(config.get("recombination", "none")).strip().lower()
+if RECOMBINATION_MODE == "auto":
+    RECOMBINATION_MODE = "gard"
+if RECOMBINATION_MODE not in {"none", "gard"}:
+    raise ValueError(
+        f"Unsupported recombination mode in config: {RECOMBINATION_MODE}. "
+        "Supported: none, gard, auto"
+    )
+GARD_MODE = str(config.get("gard_mode", "Faster")).strip() or "Faster"
+if GARD_MODE not in {"Normal", "Faster"}:
+    raise ValueError(
+        f"Unsupported gard_mode in config: {GARD_MODE}. Supported: Normal, Faster"
+    )
+GARD_RATE_CLASSES = int(config.get("gard_rate_classes", 3))
+if GARD_RATE_CLASSES < 1:
+    raise ValueError("gard_rate_classes must be >= 1")
+RUN_GARD = RECOMBINATION_MODE == "gard"
 ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "rbh")).strip().lower()
 if ORTHOGROUP_METHOD not in {"rbh", "orthofinder"}:
     raise ValueError(
@@ -161,6 +178,10 @@ def pathway_cds_alignment(wildcards):
     return OUTDIR / "alignments" / wildcards.method / wildcards.trim_state / "mapped_orthogroup_cds.analysis.fasta"
 
 
+def pathway_gard_summary(wildcards):
+    return OUTDIR / "recombination" / wildcards.method / wildcards.trim_state / "gard" / "gard_summary.json"
+
+
 if HAVE_CDS:
     rule all:
         input:
@@ -176,6 +197,15 @@ if HAVE_CDS:
             OUTDIR / "summary" / "robustness_publication_table.tex",
             OUTDIR / "summary" / "run_provenance.json",
             OUTDIR / "summary" / "episodic_selection_summary.txt",
+            (
+                expand(
+                    OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard_summary.json",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                )
+                if RUN_GARD
+                else []
+            ),
             OUTDIR / "asr" / "branch_to_nodes.tsv",
             OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
             OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
@@ -435,9 +465,49 @@ if HAVE_CDS:
             )
 
 
+    if RUN_GARD:
+        rule gard_screen_pathway:
+            input:
+                aln=pathway_cds_alignment
+            output:
+                summary=OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard_summary.json",
+                raw=OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard.json",
+                stdout=OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard.stdout.txt",
+                stderr=OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard.stderr.txt",
+            wildcard_constraints:
+                method=METHOD_PATTERN,
+                trim_state=TRIM_PATTERN
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/recombination/{wildcards.method}/{wildcards.trim_state}/gard
+                python -m babappasnake.scripts.run_gard_screen \
+                  --cds-aln {input.aln} \
+                  --outdir {OUTDIR}/recombination/{wildcards.method}/{wildcards.trim_state}/gard \
+                  --hyphy "{HYPHY}" \
+                  --mode {RECOMBINATION_MODE:q} \
+                  --gard-mode {GARD_MODE:q} \
+                  --rate-classes {GARD_RATE_CLASSES} \
+                  --method {wildcards.method:q} \
+                  --trim-state {wildcards.trim_state:q} \
+                  --fail-on-error
+                test -f {output.summary}
+                test -f {output.raw}
+                '''
+
+
+        rule gard_all_pathways:
+            input:
+                expand(
+                    OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard_summary.json",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                )
+
+
     rule iqtree_ml_pathway:
         input:
-            pathway_protein_alignment
+            protein=pathway_protein_alignment,
+            gard=pathway_gard_summary if RUN_GARD else []
         output:
             tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.treefile"
         wildcard_constraints:
@@ -452,7 +522,7 @@ if HAVE_CDS:
             r'''
             mkdir -p {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}
             mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
-            "{IQTREE}" -s {input} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}/orthogroup > {log} 2>&1
+            "{IQTREE}" -s {input.protein} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}/orthogroup > {log} 2>&1
             test -f {output.tree}
             '''
 
@@ -782,6 +852,15 @@ if HAVE_CDS:
         wildcard_constraints:
             method=METHOD_PATTERN,
             trim_state=TRIM_PATTERN
+        params:
+            gard_summary=(
+                lambda wildcards: OUTDIR
+                / "recombination"
+                / wildcards.method
+                / wildcards.trim_state
+                / "gard"
+                / "gard_summary.json"
+            )
         log:
             OUTDIR / "logs" / "{method}" / "{trim_state}" / "final_summary.log"
         shell:
@@ -796,6 +875,7 @@ if HAVE_CDS:
               --branchsite {input.branchsite} \
               --hyphy-dir {OUTDIR}/hyphy/{wildcards.method}/{wildcards.trim_state} \
               --meme-p {MEME_P} \
+              --gard-summary {params.gard_summary} \
               --method {wildcards.method} \
               --trim-state {wildcards.trim_state} \
               --out {output} > {log} 2>&1
@@ -862,6 +942,15 @@ if HAVE_CDS:
                 OUTDIR / "alignments" / "{method}" / "{trim_state}" / "mapped_orthogroup_cds.analysis.fasta",
                 method=ALIGNMENT_METHODS,
                 trim_state=TRIM_STATES,
+            ),
+            gard=(
+                expand(
+                    OUTDIR / "recombination" / "{method}" / "{trim_state}" / "gard" / "gard_summary.json",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                )
+                if RUN_GARD
+                else []
             ),
         output:
             matrix=OUTDIR / "summary" / "robustness_matrix.tsv",
@@ -948,6 +1037,9 @@ if HAVE_CDS:
                     "absrel_dynamic_max": ABSREL_DYNAMIC_MAX,
                     "meme_p": MEME_P,
                     "codeml_codonfreq": CODEML_CODONFREQ,
+                    "recombination": RECOMBINATION_MODE,
+                    "gard_mode": GARD_MODE,
+                    "gard_rate_classes": GARD_RATE_CLASSES,
                     "clipkit_mode_protein": CLIPKIT_MODE_PROTEIN,
                     "clipkit_mode_codon": CLIPKIT_MODE_CODON,
                     "threads_total": THREADS,
@@ -962,6 +1054,7 @@ if HAVE_CDS:
                     "publication_table_latex": str(summary_dir / "robustness_publication_table.tex"),
                     "top_level_summary": str(Path(str(input.top_summary))),
                     "top_level_asr": str(Path(str(input.top_asr))),
+                    "recombination_dir": str((OUTDIR / "recombination")),
                     "asr_branch_to_nodes": str(Path(str(input.asr_branch_nodes))),
                     "asr_selected_branch_summary": str(Path(str(input.asr_summary))),
                     "asr_extraction_provenance": str(Path(str(input.asr_provenance))),
