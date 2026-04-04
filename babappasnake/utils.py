@@ -14,8 +14,9 @@ class ToolSpec:
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("python", ("python",), True, "Provided by the active environment."),
-    ToolSpec("blastp", ("blastp",), True, "conda install -c conda-forge -c bioconda blast"),
-    ToolSpec("makeblastdb", ("makeblastdb",), True, "conda install -c conda-forge -c bioconda blast"),
+    ToolSpec("blastp", ("blastp",), False, "conda install -c conda-forge -c bioconda blast"),
+    ToolSpec("makeblastdb", ("makeblastdb",), False, "conda install -c conda-forge -c bioconda blast"),
+    ToolSpec("orthofinder", ("orthofinder",), False, "conda install -c conda-forge -c bioconda orthofinder"),
     ToolSpec("iqtree", ("iqtree2", "iqtree3", "iqtree"), True, "conda install -c conda-forge -c bioconda iqtree"),
     ToolSpec("hyphy", ("hyphy",), True, "conda install -c conda-forge -c bioconda hyphy"),
     ToolSpec("codeml", ("codeml",), True, "conda install -c conda-forge -c bioconda paml"),

@@ -25,6 +25,12 @@ IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
 CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
+ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "rbh")).strip().lower()
+if ORTHOGROUP_METHOD not in {"rbh", "orthofinder"}:
+    raise ValueError(
+        f"Unsupported orthogroup_method in config: {ORTHOGROUP_METHOD}. "
+        "Supported: rbh, orthofinder"
+    )
 
 SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
 SUPPORTED_TRIM_STATES = ("raw", "clipkit")
@@ -133,8 +139,9 @@ PRIMARY_TRIM = "clipkit" if "clipkit" in TRIM_STATES else TRIM_STATES[0]
 PATHWAY_LABELS = [f"{method}:{trim_state}" for method in ALIGNMENT_METHODS for trim_state in TRIM_STATES]
 
 EXE = config.get("executables", {})
-BLASTP = EXE["blastp"]
-MAKEBLASTDB = EXE["makeblastdb"]
+BLASTP = EXE.get("blastp", "blastp")
+MAKEBLASTDB = EXE.get("makeblastdb", "makeblastdb")
+ORTHOFINDER = EXE.get("orthofinder", "orthofinder")
 IQTREE = EXE["iqtree"]
 HYPHY = EXE["hyphy"]
 CODEML = EXE["codeml"]
@@ -201,14 +208,27 @@ rule rbh_orthogroup:
     shell:
         r'''
         mkdir -p {OUTDIR}/orthogroup
-        python -m babappasnake.scripts.run_rbh_pipeline \
-          --query {input.query} \
-          --proteomes {input.proteomes} \
-          --outdir {OUTDIR}/orthogroup \
-          --coverage {COVERAGE} \
-          --threads {threads} \
-          --blastp "{BLASTP}" \
-          --makeblastdb "{MAKEBLASTDB}"
+        if [ "{ORTHOGROUP_METHOD}" = "orthofinder" ]; then
+          python -m babappasnake.scripts.run_orthofinder_pipeline \
+            --query {input.query} \
+            --proteomes {input.proteomes} \
+            --outdir {OUTDIR}/orthogroup \
+            --coverage {COVERAGE} \
+            --threads {threads} \
+            --blastp "{BLASTP}" \
+            --makeblastdb "{MAKEBLASTDB}" \
+            --orthofinder "{ORTHOFINDER}";
+        else
+          python -m babappasnake.scripts.run_rbh_pipeline \
+            --query {input.query} \
+            --proteomes {input.proteomes} \
+            --outdir {OUTDIR}/orthogroup \
+            --coverage {COVERAGE} \
+            --threads {threads} \
+            --blastp "{BLASTP}" \
+            --makeblastdb "{MAKEBLASTDB}" \
+            --orthofinder "{ORTHOFINDER}";
+        fi
         '''
 
 
@@ -915,6 +935,7 @@ if HAVE_CDS:
                 "pathways": [f"{m}_{t}" for m in ALIGNMENT_METHODS for t in TRIM_STATES],
                 "parameters": {
                     "coverage": COVERAGE,
+                    "orthogroup_method": ORTHOGROUP_METHOD,
                     "outgroup_query": OUTGROUP_QUERY,
                     "iqtree_model": IQTREE_MODEL,
                     "iqtree_bootstrap": IQTREE_BOOTSTRAP,

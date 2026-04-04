@@ -48,6 +48,7 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     args = Namespace(
         coverage=0.7,
         threads=12,
+        orthogroup_method="rbh",
         outgroup="culex",
         iqtree_bootstrap=1000,
         iqtree_bnni="no",
@@ -82,6 +83,7 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     )
 
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    assert cfg["orthogroup_method"] == "rbh"
     assert cfg["trim_strategy"] == "both"
     assert cfg["trim_states"] == ["raw", "clipkit"]
     assert cfg["use_clipkit"] is True
@@ -97,3 +99,25 @@ def test_force_robustness_trim_strategy_always_returns_both():
     strategy, states = cli.force_robustness_trim_strategy("clipkit")
     assert strategy == "both"
     assert states == ["raw", "clipkit"]
+
+
+def test_validate_orthogroup_method_tools_rbh_requires_blast_tools():
+    cli.validate_orthogroup_method_tools(
+        "rbh",
+        {
+            "blastp": "/usr/bin/blastp",
+            "makeblastdb": "/usr/bin/makeblastdb",
+            "orthofinder": "/usr/bin/orthofinder",
+        },
+    )
+
+
+def test_validate_orthogroup_method_tools_orthofinder_requires_binary():
+    cli.validate_orthogroup_method_tools(
+        "orthofinder",
+        {
+            "orthofinder": "/usr/bin/orthofinder",
+            "blastp": "/usr/bin/blastp",
+            "makeblastdb": "/usr/bin/makeblastdb",
+        },
+    )

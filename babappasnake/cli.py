@@ -38,6 +38,7 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
     "3": ("prank",),
     "4": ("babappalign", "mafft", "prank"),
 }
+ORTHOGROUP_METHOD_CHOICES = ("rbh", "orthofinder")
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
 FORCED_TRIM_STRATEGY = "both"
 FORCED_TRIM_STATES = ["raw", "clipkit"]
@@ -276,6 +277,26 @@ def prompt_alignment_method_option(default: str) -> str:
         print("Invalid selection.")
 
 
+def prompt_orthogroup_method(default: str) -> str:
+    print("Orthogroup discovery method (--orthogroup-method)")
+    labels = {
+        "rbh": "Reciprocal best hit (RBH)",
+        "orthofinder": "OrthoFinder",
+    }
+    for idx, key in enumerate(ORTHOGROUP_METHOD_CHOICES, start=1):
+        mark = " (default)" if key == default else ""
+        print(f"  {idx}. {labels[key]}{mark}")
+    while True:
+        value = input("Select option (1/2) or press Enter for default: ").strip().lower()
+        if not value:
+            return default
+        if value in {"1", "2"}:
+            return ORTHOGROUP_METHOD_CHOICES[int(value) - 1]
+        if value in ORTHOGROUP_METHOD_CHOICES:
+            return value
+        print("Invalid selection.")
+
+
 def prompt_trim_strategy(default: str) -> str:
     print("Choose trimming strategy")
     options = (
@@ -318,6 +339,27 @@ def validate_selected_alignment_tools(
         )
 
 
+def validate_orthogroup_method_tools(method: str, resolved_tools: dict[str, str]) -> None:
+    selected = str(method).strip().lower()
+    if selected == "rbh":
+        missing = [tool for tool in ("blastp", "makeblastdb", "orthofinder") if tool not in resolved_tools]
+        if missing:
+            raise SystemExit(
+                "Orthogroup method 'rbh' with automatic OrthoFinder fallback requires missing tools on PATH: "
+                + ", ".join(missing)
+            )
+        return
+    if selected == "orthofinder":
+        missing = [tool for tool in ("orthofinder", "blastp", "makeblastdb") if tool not in resolved_tools]
+        if missing:
+            raise SystemExit(
+                "Orthogroup method 'orthofinder' requires tools on PATH: "
+                + ", ".join(missing)
+            )
+        return
+    raise SystemExit(f"Unsupported orthogroup method: {method}")
+
+
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if args.interactive == "no":
         return args
@@ -328,6 +370,11 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
     args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
+    args.orthogroup_method = "rbh"
+    print(
+        "Orthogroup backend is fixed in interactive mode: RBH + mandatory OrthoFinder comparison. "
+        "The backend with higher 1:1 ortholog count is selected automatically."
+    )
     args.alignment_methods = prompt_alignment_method_option(str(args.alignment_methods))
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Total cores (--threads)", int(args.threads))
@@ -381,11 +428,13 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
+    print(f"- orthogroup_method: {args.orthogroup_method}")
     print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
     print(f"- trim_strategy: {args.trim_strategy}")
     print(f"- pathways: {', '.join(enumerate_pathways(parse_alignment_method_option(args.alignment_methods), trim_states))}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
+    print("- orthofinder_fallback: always compare RBH vs OrthoFinder by 1:1 ortholog count")
     print(f"- use_clipkit (compat): {args.use_clipkit}")
     if "clipkit" in trim_states:
         print(f"- clipkit_mode_protein: {args.clipkit_mode_protein}")
@@ -413,6 +462,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prot", default=None, help="Path to proteomes folder")
     p.add_argument("--query", default=None, help="Path to protein query FASTA")
     p.add_argument("--cds", default=None, help="Optional CDS FASTA for the orthogroup")
+    p.add_argument(
+        "--orthogroup-method",
+        choices=list(ORTHOGROUP_METHOD_CHOICES),
+        default="rbh",
+        help="Orthogroup discovery backend [default: rbh]. In guided mode, rbh is used with automatic orthofinder fallback.",
+    )
     p.add_argument("--outdir", default="babappasnake_run", help="Output directory")
     p.add_argument(
         "--alignment-methods",
@@ -482,6 +537,11 @@ def validate_inputs(args: argparse.Namespace) -> None:
         if not cds_path.is_file():
             raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
     parse_alignment_method_option(args.alignment_methods)
+    if str(args.orthogroup_method).strip().lower() not in ORTHOGROUP_METHOD_CHOICES:
+        raise SystemExit(
+            f"Invalid --orthogroup-method option: {args.orthogroup_method}. "
+            "Choose one of: rbh, orthofinder"
+        )
     parse_trim_strategy(derive_trim_strategy(args.trim_strategy, args.use_clipkit))
 
 
@@ -515,6 +575,7 @@ def write_config(
         "query_fasta": str((outdir / "inputs" / "query.fasta").resolve()),
         "proteomes_dir": str((outdir / "inputs" / "proteomes").resolve()),
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
+        "orthogroup_method": str(args.orthogroup_method).strip().lower(),
         "alignment_methods": methods,
         "trim_strategy": trim_strategy,
         "trim_states": trim_states,
@@ -833,10 +894,10 @@ def print_orthogroup_membership(outdir: Path) -> None:
         return
 
     print("\nOrthogroup membership summary:")
-    print(f"  Included groups with RBH orthologs: {len(included)}")
+    print(f"  Included groups with ortholog(s): {len(included)}")
     for species, ortholog in included:
         print(f"    - {species}: {ortholog}")
-    print(f"  Omitted groups (no RBH hit at current thresholds): {len(omitted)}")
+    print(f"  Omitted groups (no ortholog in selected orthogroup): {len(omitted)}")
     for species in omitted:
         print(f"    - {species}")
 
@@ -908,7 +969,7 @@ def run_guided_pipeline(
         print(f"  - {pathway}")
     rbh_step = StepSpec(
         "rbh_orthogroup",
-        "Build orthogroup proteins and RBH mapping.",
+        f"Build orthogroup proteins using '{args.orthogroup_method}' backend.",
         (
             "orthogroup/orthogroup_proteins.fasta",
             "orthogroup/orthogroup_headers.txt",
@@ -1006,6 +1067,7 @@ def main() -> None:
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
+    validate_orthogroup_method_tools(args.orthogroup_method, resolved)
     validate_selected_alignment_tools(methods, trim_states, resolved)
 
     outdir = Path(args.outdir)
