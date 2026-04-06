@@ -16,6 +16,7 @@ config/package_live_override.yaml
 /rst1
 /rub
 babappasnake-v*-zenodo.tar.gz
+*.tar.xz
 results/
 results*/
 /.cache/
@@ -29,3 +30,23 @@ errors.log
 6_hyphy/
 7_codeml/
 manuscript/
+applicationnote/
+
+# LaTeX build artifacts (manuscript/application note and similar)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Editor/OS non-essential files
+.vscode/
+.idea/
