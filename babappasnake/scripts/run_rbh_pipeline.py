@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--blastp", default="blastp")
     p.add_argument("--makeblastdb", default="makeblastdb")
     p.add_argument("--orthofinder", default="orthofinder")
+    p.add_argument("--mode", choices=["rbh", "rbh_fallback"], default="rbh")
     return p.parse_args()
 
 
@@ -273,7 +274,12 @@ def choose_single_copy_rbh(
     blastp_exe: str,
     makeblastdb_exe: str,
     orthofinder_exe: str,
+    mode: str = "rbh",
 ) -> None:
+    selected_mode = str(mode).strip().lower()
+    if selected_mode not in {"rbh", "rbh_fallback"}:
+        raise ValueError(f"Unsupported RBH selection mode: {mode}")
+
     outdir.mkdir(parents=True, exist_ok=True)
     query_id, rbh_records, rbh_headers, rbh_rows, total_species = run_rbh_only(
         query_fasta=query_fasta,
@@ -295,7 +301,16 @@ def choose_single_copy_rbh(
         f"{rbh_one_to_one}/{total} ({rbh_ratio:.1%})."
     )
 
-    print("[INFO] Running OrthoFinder for mandatory RBH-vs-OrthoFinder comparison.")
+    if selected_mode == "rbh":
+        if rbh_one_to_one <= 0:
+            raise RuntimeError(
+                f"No orthogroup could be defined for query '{query_id}' using RBH only "
+                "(RBH produced zero 1:1 orthologs). Pipeline will stop at orthogroup discovery."
+            )
+        print("[INFO] Keeping RBH result for downstream use (RBH-only mode).")
+        return
+
+    print("[INFO] Running OrthoFinder for RBH-vs-OrthoFinder fallback comparison.")
 
     fallback_dir = outdir / "_orthofinder_fallback"
     try:
@@ -367,4 +382,5 @@ if __name__ == "__main__":
         blastp_exe=a.blastp,
         makeblastdb_exe=a.makeblastdb,
         orthofinder_exe=a.orthofinder,
+        mode=a.mode,
     )

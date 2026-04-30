@@ -13,6 +13,40 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def test_rbh_only_hard_stops_when_zero_one_to_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    query = tmp_path / "query.fasta"
+    proteomes = tmp_path / "proteomes"
+    outdir = tmp_path / "out"
+    _write(query, ">query1\nMPEPTIDE\n")
+    _write(proteomes / "speciesA.fasta", ">A1\nMPEPTIDE\n")
+
+    monkeypatch.setattr(rbh, "make_blast_db", lambda fasta, exe: str(Path(fasta).with_suffix("")))
+    monkeypatch.setattr(rbh, "run_blastp", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rbh, "get_best_hits", lambda *args, **kwargs: {})
+
+    def forbidden_fallback(*args, **kwargs):
+        raise AssertionError("fallback should not run in RBH-only mode")
+
+    monkeypatch.setattr(rbh, "run_orthofinder_fallback", forbidden_fallback)
+
+    with pytest.raises(RuntimeError, match="using RBH only"):
+        rbh.choose_single_copy_rbh(
+            query_fasta=query,
+            proteomes_dir=proteomes,
+            outdir=outdir,
+            coverage=0.7,
+            evalue=1e-5,
+            threads=1,
+            blastp_exe="blastp",
+            makeblastdb_exe="makeblastdb",
+            orthofinder_exe="orthofinder",
+            mode="rbh",
+        )
+
+
 def test_rbh_fallback_hard_stops_when_both_methods_have_zero_one_to_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -49,6 +83,7 @@ def test_rbh_fallback_hard_stops_when_both_methods_have_zero_one_to_one(
             blastp_exe="blastp",
             makeblastdb_exe="makeblastdb",
             orthofinder_exe="orthofinder",
+            mode="rbh_fallback",
         )
 
 
@@ -143,8 +178,52 @@ def test_rbh_fallback_selects_orthofinder_when_it_has_more_one_to_one(
         blastp_exe="blastp",
         makeblastdb_exe="makeblastdb",
         orthofinder_exe="orthofinder",
+        mode="rbh_fallback",
     )
 
     summary = (outdir / "rbh_summary.tsv").read_text(encoding="utf-8")
     assert "speciesA\tquery1\tA1" in summary
     assert "speciesB\tquery1\tB1" in summary
+
+
+def test_rbh_only_succeeds_without_running_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    query = tmp_path / "query.fasta"
+    proteomes = tmp_path / "proteomes"
+    outdir = tmp_path / "out"
+    _write(query, ">query1\nMPEPTIDE\n")
+    _write(proteomes / "speciesA.fasta", ">A1\nMPEPTIDE\n")
+
+    monkeypatch.setattr(rbh, "make_blast_db", lambda fasta, exe: str(Path(fasta).with_suffix("")))
+    monkeypatch.setattr(rbh, "run_blastp", lambda *args, **kwargs: None)
+
+    def fake_best_hits(blast_file: Path, _min_cov: float):
+        if blast_file.name.endswith(".fwd.tsv"):
+            return {"query1": "A1"}
+        return {"A1": "query1"}
+
+    monkeypatch.setattr(rbh, "get_best_hits", fake_best_hits)
+
+    def forbidden_fallback(*args, **kwargs):
+        raise AssertionError("fallback should not run in RBH-only mode")
+
+    monkeypatch.setattr(rbh, "run_orthofinder_fallback", forbidden_fallback)
+
+    rbh.choose_single_copy_rbh(
+        query_fasta=query,
+        proteomes_dir=proteomes,
+        outdir=outdir,
+        coverage=0.7,
+        evalue=1e-5,
+        threads=1,
+        blastp_exe="blastp",
+        makeblastdb_exe="makeblastdb",
+        orthofinder_exe="orthofinder",
+        mode="rbh",
+    )
+
+    summary = (outdir / "rbh_summary.tsv").read_text(encoding="utf-8")
+    assert "speciesA\tquery1\tA1" in summary
+    assert not (outdir / "_orthofinder_fallback").exists()

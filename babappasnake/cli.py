@@ -38,7 +38,12 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
     "3": ("prank",),
     "4": ("babappalign", "mafft", "prank"),
 }
-ORTHOGROUP_METHOD_CHOICES = ("rbh", "orthofinder")
+ORTHOGROUP_METHOD_CHOICES = ("rbh", "orthofinder", "rbh_fallback")
+ORTHOGROUP_METHOD_LABELS = {
+    "rbh": "Reciprocal best hit (RBH) only",
+    "orthofinder": "OrthoFinder only",
+    "rbh_fallback": "RBH with OrthoFinder fallback/comparison",
+}
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
 RECOMBINATION_CHOICES = ("none", "gard", "auto")
 GARD_MODE_CHOICES = ("Normal", "Faster")
@@ -295,18 +300,14 @@ def prompt_alignment_method_option(default: str) -> str:
 
 def prompt_orthogroup_method(default: str) -> str:
     print("Orthogroup discovery method (--orthogroup-method)")
-    labels = {
-        "rbh": "Reciprocal best hit (RBH)",
-        "orthofinder": "OrthoFinder",
-    }
     for idx, key in enumerate(ORTHOGROUP_METHOD_CHOICES, start=1):
         mark = " (default)" if key == default else ""
-        print(f"  {idx}. {labels[key]}{mark}")
+        print(f"  {idx}. {ORTHOGROUP_METHOD_LABELS[key]}{mark}")
     while True:
-        value = input("Select option (1/2) or press Enter for default: ").strip().lower()
+        value = input("Select option (1/2/3) or press Enter for default: ").strip().lower()
         if not value:
             return default
-        if value in {"1", "2"}:
+        if value in {"1", "2", "3"}:
             return ORTHOGROUP_METHOD_CHOICES[int(value) - 1]
         if value in ORTHOGROUP_METHOD_CHOICES:
             return value
@@ -395,10 +396,10 @@ def validate_selected_alignment_tools(
 def validate_orthogroup_method_tools(method: str, resolved_tools: dict[str, str]) -> None:
     selected = str(method).strip().lower()
     if selected == "rbh":
-        missing = [tool for tool in ("blastp", "makeblastdb", "orthofinder") if tool not in resolved_tools]
+        missing = [tool for tool in ("blastp", "makeblastdb") if tool not in resolved_tools]
         if missing:
             raise SystemExit(
-                "Orthogroup method 'rbh' with automatic OrthoFinder fallback requires missing tools on PATH: "
+                "Orthogroup method 'rbh' requires BLAST tools on PATH: "
                 + ", ".join(missing)
             )
         return
@@ -407,6 +408,14 @@ def validate_orthogroup_method_tools(method: str, resolved_tools: dict[str, str]
         if missing:
             raise SystemExit(
                 "Orthogroup method 'orthofinder' requires tools on PATH: "
+                + ", ".join(missing)
+            )
+        return
+    if selected == "rbh_fallback":
+        missing = [tool for tool in ("blastp", "makeblastdb", "orthofinder") if tool not in resolved_tools]
+        if missing:
+            raise SystemExit(
+                "Orthogroup method 'rbh_fallback' requires RBH tools plus OrthoFinder on PATH: "
                 + ", ".join(missing)
             )
         return
@@ -431,11 +440,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
     args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
-    args.orthogroup_method = "rbh"
-    print(
-        "Orthogroup backend is fixed in interactive mode: RBH + mandatory OrthoFinder comparison. "
-        "The backend with higher 1:1 ortholog count is selected automatically."
-    )
+    args.orthogroup_method = prompt_orthogroup_method(str(args.orthogroup_method))
     args.alignment_methods = prompt_alignment_method_option(str(args.alignment_methods))
     args.coverage = prompt_float("RBH reciprocal coverage (--coverage)", float(args.coverage))
     args.threads = prompt_int("Total cores (--threads)", int(args.threads))
@@ -496,7 +501,10 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
-    print(f"- orthogroup_method: {args.orthogroup_method}")
+    print(
+        f"- orthogroup_method: {args.orthogroup_method} "
+        f"({ORTHOGROUP_METHOD_LABELS[str(args.orthogroup_method).strip().lower()]})"
+    )
     print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
     print(f"- trim_strategy: {args.trim_strategy}")
     print(f"- pathways: {', '.join(enumerate_pathways(parse_alignment_method_option(args.alignment_methods), trim_states))}")
@@ -506,7 +514,8 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
         print(f"- gard_rate_classes: {args.gard_rate_classes}")
     print(f"- threads: {args.threads}")
     print(f"- coverage: {args.coverage}")
-    print("- orthofinder_fallback: always compare RBH vs OrthoFinder by 1:1 ortholog count")
+    if args.orthogroup_method == "rbh_fallback":
+        print("- orthogroup_selection: compare RBH vs OrthoFinder and keep the higher 1:1 count")
     print(f"- use_clipkit (compat): {args.use_clipkit}")
     if "clipkit" in trim_states:
         print(f"- clipkit_mode_protein: {args.clipkit_mode_protein}")
@@ -538,7 +547,10 @@ def parse_args() -> argparse.Namespace:
         "--orthogroup-method",
         choices=list(ORTHOGROUP_METHOD_CHOICES),
         default="rbh",
-        help="Orthogroup discovery backend [default: rbh]. In guided mode, rbh is used with automatic orthofinder fallback.",
+        help=(
+            "Orthogroup discovery backend [default: rbh]. "
+            "Choose RBH only, OrthoFinder only, or RBH with OrthoFinder fallback/comparison."
+        ),
     )
     p.add_argument("--outdir", default="babappasnake_run", help="Output directory")
     p.add_argument(
@@ -630,7 +642,7 @@ def validate_inputs(args: argparse.Namespace) -> None:
     if str(args.orthogroup_method).strip().lower() not in ORTHOGROUP_METHOD_CHOICES:
         raise SystemExit(
             f"Invalid --orthogroup-method option: {args.orthogroup_method}. "
-            "Choose one of: rbh, orthofinder"
+            "Choose one of: rbh, orthofinder, rbh_fallback"
         )
     parse_trim_strategy(derive_trim_strategy(args.trim_strategy, args.use_clipkit))
     parse_recombination_mode(args.recombination)

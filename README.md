@@ -131,7 +131,15 @@ which babappalign mafft prank
 
 ### Default strategy (`--orthogroup-method rbh`)
 
-In default mode, orthogroup selection is a two-backend comparison:
+In default mode, orthogroup selection uses RBH only:
+
+1. Run RBH stage.
+2. Compute strict 1:1 ortholog count from RBH output.
+3. If RBH yields zero strict 1:1 orthologs, stop with explicit error.
+
+### Fallback comparison mode (`--orthogroup-method rbh_fallback`)
+
+This preserves the previous behavior as an explicit opt-in:
 
 1. Run RBH stage.
 2. Run OrthoFinder stage.
@@ -163,7 +171,7 @@ OrthoFinder query mapping is BLAST-based, not query-ID membership based:
 A species contributes only if exactly one ortholog is retained for that species.
 This guarantees no duplicate ortholog entries for the same species in the final selected orthogroup.
 
-### Compatibility mode (`--orthogroup-method orthofinder`)
+### Direct OrthoFinder mode (`--orthogroup-method orthofinder`)
 
 - Runs OrthoFinder selection directly.
 - Uses the same BLAST-based query-to-orthogroup mapping and strict 1:1 filtering.
@@ -186,8 +194,8 @@ Behavior:
 
 Important guided-mode defaults:
 
-- Orthogroup backend is fixed to `rbh` in interactive mode.
-- RBH is always compared against OrthoFinder and the better strict 1:1 result is selected.
+- Orthogroup backend defaults to `rbh` in interactive mode.
+- You can choose `rbh`, `orthofinder`, or `rbh_fallback`.
 - Trimming is forced to robustness mode (`raw + clipkit`) for comparative summaries.
 - CDS is asked only after orthogroup stage finishes.
 - Outgroup prompt comes after CDS prompt and is optional.
@@ -390,7 +398,7 @@ babappasnake --prot PROTEOMES_DIR --query QUERY_FASTA [options]
 Core options:
 
 - `--cds PATH`
-- `--orthogroup-method {rbh,orthofinder}`
+- `--orthogroup-method {rbh,orthofinder,rbh_fallback}`
 - `--alignment-methods {1,2,3,4}`
 - `--outgroup TEXT`
 - `--outdir PATH`

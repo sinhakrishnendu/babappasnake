@@ -43,10 +43,10 @@ if GARD_RATE_CLASSES < 1:
     raise ValueError("gard_rate_classes must be >= 1")
 RUN_GARD = RECOMBINATION_MODE == "gard"
 ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "rbh")).strip().lower()
-if ORTHOGROUP_METHOD not in {"rbh", "orthofinder"}:
+if ORTHOGROUP_METHOD not in {"rbh", "orthofinder", "rbh_fallback"}:
     raise ValueError(
         f"Unsupported orthogroup_method in config: {ORTHOGROUP_METHOD}. "
-        "Supported: rbh, orthofinder"
+        "Supported: rbh, orthofinder, rbh_fallback"
     )
 
 SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
@@ -257,7 +257,8 @@ rule rbh_orthogroup:
             --threads {threads} \
             --blastp "{BLASTP}" \
             --makeblastdb "{MAKEBLASTDB}" \
-            --orthofinder "{ORTHOFINDER}";
+            --orthofinder "{ORTHOFINDER}" \
+            --mode "{ORTHOGROUP_METHOD}";
         fi
         '''
 

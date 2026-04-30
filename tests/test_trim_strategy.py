@@ -149,7 +149,6 @@ def test_validate_orthogroup_method_tools_rbh_requires_blast_tools():
         {
             "blastp": "/usr/bin/blastp",
             "makeblastdb": "/usr/bin/makeblastdb",
-            "orthofinder": "/usr/bin/orthofinder",
         },
     )
 
@@ -161,5 +160,25 @@ def test_validate_orthogroup_method_tools_orthofinder_requires_binary():
             "orthofinder": "/usr/bin/orthofinder",
             "blastp": "/usr/bin/blastp",
             "makeblastdb": "/usr/bin/makeblastdb",
+        },
+    )
+
+
+def test_validate_orthogroup_method_tools_rbh_fallback_requires_orthofinder():
+    with pytest.raises(SystemExit):
+        cli.validate_orthogroup_method_tools(
+            "rbh_fallback",
+            {
+                "blastp": "/usr/bin/blastp",
+                "makeblastdb": "/usr/bin/makeblastdb",
+            },
+        )
+
+    cli.validate_orthogroup_method_tools(
+        "rbh_fallback",
+        {
+            "blastp": "/usr/bin/blastp",
+            "makeblastdb": "/usr/bin/makeblastdb",
+            "orthofinder": "/usr/bin/orthofinder",
         },
     )

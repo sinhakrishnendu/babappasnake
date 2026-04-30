@@ -65,7 +65,8 @@ BABAPPASNAKE was designed around five practical goals:
 
 \subsection{Inputs and orthogroup stage}
 Core inputs are (i) a query protein FASTA, (ii) a directory of proteome FASTA files, and (iii) optionally a CDS FASTA.
-In the default workflow path, RBH and OrthoFinder are both run, and the selected orthogroup is chosen by strict 1:1 ortholog support.
+In the default workflow path, RBH is run directly and must itself recover usable strict 1:1 ortholog support.
+An optional comparison mode also runs OrthoFinder and selects the orthogroup with stronger strict 1:1 support.
 OrthoFinder query-to-orthogroup assignment is BLAST-based against orthogroup-member sequences, avoiding dependence on direct query-ID membership.
 
 If neither route yields usable strict 1:1 support, the pipeline stops with an explicit message at orthogroup discovery.
