@@ -92,3 +92,42 @@ def test_run_gard_screen_fallbacks_when_options_not_supported(tmp_path):
     assert summary["breakpoints_detected"] is True
     assert summary["n_breakpoints"] == 2
 
+
+def test_run_gard_screen_rejects_stale_json_when_command_returns_zero_without_output(tmp_path):
+    cds_aln = tmp_path / "cds.aln.fasta"
+    outdir = tmp_path / "recomb" / "m" / "t" / "gard"
+    fake_hyphy = tmp_path / "hyphy_fake.py"
+    _write(cds_aln, ">a\nATGAAATAG\n>b\nATGAAATAG\n")
+    _write(outdir / "gard.json", json.dumps({"status": "stale"}) + "\n")
+    _write(
+        fake_hyphy,
+        (
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            "sys.exit(0)\n"
+        ),
+    )
+    os.chmod(fake_hyphy, os.stat(fake_hyphy).st_mode | stat.S_IEXEC)
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "babappasnake.scripts.run_gard_screen",
+            "--cds-aln",
+            str(cds_aln),
+            "--outdir",
+            str(outdir),
+            "--hyphy",
+            str(fake_hyphy),
+            "--mode",
+            "gard",
+        ],
+        check=True,
+    )
+
+    summary = json.loads((outdir / "gard_summary.json").read_text(encoding="utf-8"))
+    gard = json.loads((outdir / "gard.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "failed"
+    assert summary["completed"] is False
+    assert gard["status"] == "failed"

@@ -36,6 +36,9 @@ def main() -> None:
 
     absrel_json = outdir / "absrel.json"
     meme_json = outdir / "meme.json"
+    for path in (absrel_json, meme_json):
+        if path.exists():
+            path.unlink()
 
     absrel_cmd = [
         a.hyphy, "absrel",

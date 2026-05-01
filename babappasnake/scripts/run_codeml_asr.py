@@ -64,6 +64,11 @@ def main() -> None:
 
     if mlc.exists():
         mlc.unlink()
+    if rst.exists():
+        rst.unlink()
+    done_json = outdir / "asr_done.json"
+    if done_json.exists():
+        done_json.unlink()
 
     res = subprocess.run(
         [a.codeml, str(ctl.resolve())],
@@ -85,7 +90,7 @@ def main() -> None:
         "mlc_asr": str(mlc.resolve()),
         "rst": str(rst.resolve()),
     }
-    (outdir / "asr_done.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    done_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

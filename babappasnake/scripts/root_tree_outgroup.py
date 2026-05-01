@@ -5,6 +5,7 @@ import argparse
 import difflib
 import re
 import shutil
+import sys
 from pathlib import Path
 
 from Bio import Phylo
@@ -55,6 +56,29 @@ def resolve_outgroup_matches(tree, outgroup_query: str):
     return matches
 
 
+def apply_outgroup_or_copy(input_tree: Path, output_tree: Path, outgroup_query: str) -> dict[str, str]:
+    output_tree.parent.mkdir(parents=True, exist_ok=True)
+    normalized_query = outgroup_query.strip()
+    if not normalized_query:
+        shutil.copy2(input_tree, output_tree)
+        return {"status": "copied_unrooted", "reason": "no_outgroup_supplied"}
+
+    tree = Phylo.read(str(input_tree), "newick")
+    try:
+        matches = resolve_outgroup_matches(tree, normalized_query)
+        outgroup = matches[0] if len(matches) == 1 else tree.common_ancestor(matches)
+        tree.root_with_outgroup(outgroup)
+        Phylo.write(tree, str(output_tree), "newick")
+        return {"status": "rooted", "reason": f"matched_{len(matches)}_tip(s)"}
+    except Exception as exc:
+        shutil.copy2(input_tree, output_tree)
+        print(
+            f"[WARN] Could not apply outgroup '{normalized_query}'; using unrooted tree downstream. {exc}",
+            file=sys.stderr,
+        )
+        return {"status": "copied_unrooted", "reason": "outgroup_not_applied"}
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--tree", required=True)
@@ -64,18 +88,7 @@ def main() -> None:
 
     input_tree = Path(a.tree)
     output_tree = Path(a.output)
-    output_tree.parent.mkdir(parents=True, exist_ok=True)
-
-    outgroup_query = a.outgroup.strip()
-    if not outgroup_query:
-        shutil.copy2(input_tree, output_tree)
-        return
-
-    tree = Phylo.read(str(input_tree), "newick")
-    matches = resolve_outgroup_matches(tree, outgroup_query)
-    outgroup = matches[0] if len(matches) == 1 else tree.common_ancestor(matches)
-    tree.root_with_outgroup(outgroup)
-    Phylo.write(tree, str(output_tree), "newick")
+    apply_outgroup_or_copy(input_tree, output_tree, str(a.outgroup))
 
 
 if __name__ == "__main__":

@@ -144,6 +144,9 @@ def main() -> None:
         str(int(a.rate_classes)),
     ]
 
+    if gard_json.exists():
+        gard_json.unlink()
+
     rc, stdout, stderr = run_command(opt_cmd)
     used_fallback = False
     command_used = list(opt_cmd)
@@ -196,6 +199,48 @@ def main() -> None:
         if a.fail_on_error:
             raise RuntimeError(
                 f"HyPhy GARD failed with return code {rc}. See {stderr_log} and {gard_json}."
+            )
+        return
+
+    if not gard_json.exists() or gard_json.stat().st_size == 0:
+        write_json(
+            gard_json,
+            {
+                "status": "failed",
+                "analysis": "gard",
+                "return_code": 125,
+                "command": command_used,
+                "stdout": stdout,
+                "stderr": stderr,
+                "fallback_used": used_fallback,
+                "error": "HyPhy GARD finished but output JSON is missing or empty.",
+            },
+        )
+        write_json(
+            summary_path,
+            {
+                "analysis": "gard",
+                "method": a.method,
+                "trim_state": a.trim_state,
+                "requested_mode": a.mode,
+                "effective_mode": mode_effective,
+                "status": "failed",
+                "completed": False,
+                "breakpoints_detected": False,
+                "n_breakpoints": None,
+                "parse_status": "not_applicable",
+                "primary_json": str(gard_json),
+                "stdout_log": str(stdout_log),
+                "stderr_log": str(stderr_log),
+                "return_code": 125,
+                "command": command_used,
+                "fallback_used": used_fallback,
+                "note": "HyPhy GARD returned successfully but did not produce a usable JSON output.",
+            },
+        )
+        if a.fail_on_error:
+            raise RuntimeError(
+                f"HyPhy GARD did not produce output JSON. See {stderr_log} and {gard_json}."
             )
         return
 

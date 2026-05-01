@@ -31,9 +31,11 @@ def _seed_common(
     tree_newick: str,
     branch_rows: list[tuple[str, str]],
     beb_by_foreground: dict[str, list[int]] | None = None,
+    rooted_available: bool = True,
 ) -> Path:
     outdir = tmp_path / "run"
-    tree_path = outdir / "tree" / METHOD / TRIM / "orthogroup.rooted.treefile"
+    tree_name = "orthogroup.rooted.treefile" if rooted_available else "orthogroup.treefile"
+    tree_path = outdir / "tree" / METHOD / TRIM / tree_name
     aln_path = outdir / "alignments" / METHOD / TRIM / "mapped_orthogroup_cds.analysis.fasta"
 
     _write(
@@ -177,3 +179,17 @@ def test_beb_overlap_sites_are_reported(tmp_path):
         if row["foreground_label_canonical"].startswith("lineage:") and row["codon_site"] == "3"
     ]
     assert hit and hit[0]["overlaps_beb_site"] == "yes"
+
+
+def test_unrooted_tree_is_used_when_rooted_copy_is_missing(tmp_path):
+    outdir = _seed_common(
+        tmp_path,
+        "((A:0.1,B:0.1)cladeAB:0.2,C:0.1)root:0.0;",
+        [("A", "True")],
+        rooted_available=False,
+    )
+    _run_extractor(outdir)
+    rows = _read_tsv(outdir / "asr" / "branch_to_nodes.tsv")
+    assert rows and rows[0]["status"] == "ok"
+    provenance = json.loads((outdir / "asr" / "asr_extraction_provenance.json").read_text(encoding="utf-8"))
+    assert provenance["pathways"][0]["tree_source"] == "unrooted_fallback"

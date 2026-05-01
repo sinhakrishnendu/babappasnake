@@ -125,7 +125,7 @@ which babappalign mafft prank
 ### `--outgroup` optional
 
 - String used to root tree by case-insensitive substring match on tip headers.
-- If omitted, unrooted trees are used downstream.
+- If omitted, or if the query is too broad / does not match, unrooted trees are used downstream.
 
 ## Orthogroup Discovery Strategy
 

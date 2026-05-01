@@ -339,6 +339,18 @@ def load_codon_alignment(path: Path) -> dict[str, SeqRecord]:
     return {rec.id: rec for rec in recs}
 
 
+def resolve_pathway_tree(outdir: Path, method: str, trim_state: str) -> tuple[Path, str]:
+    rooted = outdir / "tree" / method / trim_state / "orthogroup.rooted.treefile"
+    if rooted.exists() and rooted.stat().st_size > 0:
+        return rooted, "rooted"
+
+    unrooted = outdir / "tree" / method / trim_state / "orthogroup.treefile"
+    if unrooted.exists() and unrooted.stat().st_size > 0:
+        return unrooted, "unrooted_fallback"
+
+    return rooted, "missing"
+
+
 def resolve_child_label(tree, raw_label: str):
     tip_exact = [c for c in tree.get_terminals() if (c.name or "") == raw_label]
     if len(tip_exact) == 1:
@@ -407,7 +419,7 @@ def ensure_asr(pathway: Pathway, outdir: Path, codeml: str, codonfreq: int) -> t
     mlc = asr_dir / "mlc_asr.txt"
     ctl = asr_dir / "codeml_asr.ctl"
     aln = outdir / "alignments" / pathway.method / pathway.trim_state / "mapped_orthogroup_cds.analysis.fasta"
-    tree = outdir / "tree" / pathway.method / pathway.trim_state / "orthogroup.rooted.treefile"
+    tree, _tree_source = resolve_pathway_tree(outdir, pathway.method, pathway.trim_state)
     expected_seqfile = str(aln.resolve())
     expected_treefile = str(tree.resolve())
 
@@ -506,7 +518,7 @@ def main() -> None:
         trim_state = pathway.trim_state
         pathway_name = pathway.name
 
-        tree_path = outdir / "tree" / method / trim_state / "orthogroup.rooted.treefile"
+        tree_path, tree_source = resolve_pathway_tree(outdir, method, trim_state)
         cds_aln = outdir / "alignments" / method / trim_state / "mapped_orthogroup_cds.analysis.fasta"
         branchsite_tsv = outdir / "branchsite" / method / trim_state / "branchsite_results.tsv"
         meme_json = outdir / "hyphy" / method / trim_state / "meme.json"
@@ -529,6 +541,7 @@ def main() -> None:
                 "method": method,
                 "trim_state": trim_state,
                 "tree": str(tree_path),
+                "tree_source": tree_source,
                 "tree_sha256": hash_file(tree_path),
                 "alignment": str(cds_aln),
                 "alignment_sha256": hash_file(cds_aln),
