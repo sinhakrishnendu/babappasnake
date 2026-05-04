@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,11 @@ def _write_fasta(path: Path, records: dict[str, str]) -> None:
         lines.append(f">{k}")
         lines.append(v)
     _write(path, "\n".join(lines) + "\n")
+
+
+def _write_executable(path: Path, text: str) -> None:
+    _write(path, text)
+    os.chmod(path, os.stat(path).st_mode | 0o111)
 
 
 def _seed_common(
@@ -89,25 +95,27 @@ def _seed_common(
     return outdir
 
 
-def _run_extractor(outdir: Path) -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "babappasnake.scripts.extract_selected_branch_ancestors",
-            "--outdir",
-            str(outdir),
-            "--pathways",
-            f"{METHOD}:{TRIM}",
-            "--codeml",
-            "/usr/bin/false",
-            "--codeml-version-override",
-            "4.10.9",
-            "--gene",
-            "gene1",
-        ],
-        check=True,
-    )
+def _run_extractor(
+    outdir: Path,
+    codeml: str = "/usr/bin/false",
+    codeml_version_override: str | None = "4.10.9",
+) -> None:
+    cmd = [
+        sys.executable,
+        "-m",
+        "babappasnake.scripts.extract_selected_branch_ancestors",
+        "--outdir",
+        str(outdir),
+        "--pathways",
+        f"{METHOD}:{TRIM}",
+        "--codeml",
+        str(codeml),
+        "--gene",
+        "gene1",
+    ]
+    if codeml_version_override is not None:
+        cmd.extend(["--codeml-version-override", str(codeml_version_override)])
+    subprocess.run(cmd, check=True)
 
 
 def _read_tsv(path: Path) -> list[dict[str, str]]:
@@ -148,6 +156,42 @@ def test_no_selected_branches_skips_cleanly(tmp_path):
     _run_extractor(outdir)
     rows = _read_tsv(outdir / "asr" / "selected_branch_asr_summary.tsv")
     assert rows and rows[0]["status"] == "no_selected_branches"
+
+
+def test_no_selected_branches_do_not_require_codeml_version_probe(tmp_path):
+    outdir = _seed_common(tmp_path, "((A:0.1,B:0.1)cladeAB:0.2,C:0.1)root:0.0;", [("A", "False")])
+    marker = tmp_path / "codeml_invoked.txt"
+    fake_codeml = tmp_path / "fake_codeml.py"
+    _write_executable(
+        fake_codeml,
+        (
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('invoked', encoding='utf-8')\n"
+        ),
+    )
+    _run_extractor(outdir, codeml=str(fake_codeml), codeml_version_override=None)
+    rows = _read_tsv(outdir / "asr" / "selected_branch_asr_summary.tsv")
+    assert rows and rows[0]["status"] == "no_selected_branches"
+    assert not marker.exists()
+
+
+def test_selected_branches_with_existing_asr_outputs_do_not_require_codeml_version_probe(tmp_path):
+    outdir = _seed_common(tmp_path, "((A:0.1,B:0.1)cladeAB:0.2,C:0.1)root:0.0;", [("A", "True")])
+    marker = tmp_path / "codeml_invoked.txt"
+    fake_codeml = tmp_path / "fake_codeml.py"
+    _write_executable(
+        fake_codeml,
+        (
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('invoked', encoding='utf-8')\n"
+        ),
+    )
+    _run_extractor(outdir, codeml=str(fake_codeml), codeml_version_override=None)
+    rows = _read_tsv(outdir / "asr" / "branch_to_nodes.tsv")
+    assert rows and rows[0]["status"] == "ok"
+    assert not marker.exists()
 
 
 def test_ambiguous_mapping_failure_is_recorded(tmp_path):

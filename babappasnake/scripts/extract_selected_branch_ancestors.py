@@ -103,15 +103,21 @@ def get_codeml_version(codeml_exe: str, override: str = "") -> str:
         )
         text = (res.stdout or "") + "\n" + (res.stderr or "")
     except Exception as exc:
-        raise RuntimeError(f"Unable to invoke codeml for version check: {exc}") from exc
+        print(
+            f"[WARN] Unable to invoke codeml for version check: {exc}. Continuing without version validation.",
+            file=sys.stderr,
+        )
+        return "unknown"
     m = re.search(r"version\s+([0-9]+(?:\.[0-9A-Za-z]+)+)", text, flags=re.IGNORECASE)
     if not m:
         m = re.search(r"PAML[^0-9]*([0-9]+(?:\.[0-9A-Za-z]+)+)", text, flags=re.IGNORECASE)
     if not m:
-        raise RuntimeError(
-            "Could not parse codeml/PAML version from codeml output. "
-            "Use --codeml-version-override if needed."
+        print(
+            "[WARN] Could not parse codeml/PAML version from codeml output. "
+            "Continuing without version validation. Use --codeml-version-override to pin a known version.",
+            file=sys.stderr,
         )
+        return "unknown"
     return m.group(1)
 
 
@@ -127,6 +133,20 @@ def parse_min_version(version_text: str) -> tuple[int, int]:
     if not m:
         raise RuntimeError(f"Invalid --min-paml-version: {version_text}")
     return int(m.group(1)), int(m.group(2))
+
+
+def validate_codeml_version(codeml_exe: str, override: str, min_version_text: str) -> str:
+    codeml_version = get_codeml_version(codeml_exe, override)
+    if codeml_version == "unknown":
+        return codeml_version
+    min_v = parse_min_version(min_version_text)
+    version_tuple = parse_version_tuple(codeml_version)
+    if version_tuple < min_v:
+        raise RuntimeError(
+            f"Detected PAML/codeml version {codeml_version} < required {min_version_text}. "
+            "Please use a newer PAML build."
+        )
+    return codeml_version
 
 
 def read_tree(path: Path):
@@ -413,7 +433,14 @@ def classify_change(parent_codon: str, child_codon: str, parent_aa: str, child_a
     return "nonsynonymous"
 
 
-def ensure_asr(pathway: Pathway, outdir: Path, codeml: str, codonfreq: int) -> tuple[Path, Path, Path]:
+def ensure_asr(
+    pathway: Pathway,
+    outdir: Path,
+    codeml: str,
+    codonfreq: int,
+    min_paml_version: str,
+    codeml_version_override: str,
+) -> tuple[Path, Path, Path, str]:
     asr_dir = outdir / "asr" / pathway.method / pathway.trim_state
     rst = asr_dir / "rst"
     mlc = asr_dir / "mlc_asr.txt"
@@ -439,7 +466,13 @@ def ensure_asr(pathway: Pathway, outdir: Path, codeml: str, codonfreq: int) -> t
         )
 
     if rst.exists() and mlc.exists() and _ctl_matches():
-        return asr_dir, rst, mlc
+        return asr_dir, rst, mlc, "not_checked"
+
+    codeml_version = validate_codeml_version(
+        str(codeml),
+        str(codeml_version_override),
+        str(min_paml_version),
+    )
 
     cmd = [
         sys.executable,
@@ -462,7 +495,7 @@ def ensure_asr(pathway: Pathway, outdir: Path, codeml: str, codonfreq: int) -> t
             f"ASR auto-run failed for {pathway.name}\nCMD: {' '.join(cmd)}\n"
             f"Exit: {res.returncode}\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
         )
-    return asr_dir, rst, mlc
+    return asr_dir, rst, mlc, codeml_version
 
 
 def write_tsv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
@@ -488,15 +521,6 @@ def main() -> None:
     outdir = Path(a.outdir)
     pathways = parse_pathways(a.pathways)
 
-    min_v = parse_min_version(a.min_paml_version)
-    codeml_version = get_codeml_version(str(a.codeml), str(a.codeml_version_override))
-    version_tuple = parse_version_tuple(codeml_version)
-    if version_tuple < min_v:
-        raise RuntimeError(
-            f"Detected PAML/codeml version {codeml_version} < required {a.min_paml_version}. "
-            "Please use a newer PAML build."
-        )
-
     branch_rows: list[dict[str, str]] = []
     subs_rows: list[dict[str, str]] = []
     summary_rows: list[dict[str, str]] = []
@@ -507,7 +531,7 @@ def main() -> None:
 
     provenance = {
         "codeml_exe": str(a.codeml),
-        "codeml_version": codeml_version,
+        "codeml_version": str(a.codeml_version_override).strip() or "not_checked",
         "min_required_paml_version": str(a.min_paml_version),
         "node_labeling_scheme": "preorder_internal_ids_N1..Nn + lineage_signature_sha1",
         "pathways": [],
@@ -523,37 +547,6 @@ def main() -> None:
         branchsite_tsv = outdir / "branchsite" / method / trim_state / "branchsite_results.tsv"
         meme_json = outdir / "hyphy" / method / trim_state / "meme.json"
 
-        asr_dir, rst_path, mlc_path = ensure_asr(pathway, outdir, str(a.codeml), int(a.codonfreq))
-        ctl_path = asr_dir / "codeml_asr.ctl"
-
-        tree = read_tree(tree_path)
-        parent_map = build_parent_map(tree)
-        internal_ids = assign_internal_ids(tree)
-        rst_tree = extract_numbered_tree_from_rst(rst_path)
-        rst_node_seqs = parse_rst_node_sequences(rst_path)
-        canon_to_rst = map_internal_ids_to_rst(tree, internal_ids, rst_tree)
-        codon_records = load_codon_alignment(cds_aln)
-        meme_sites = parse_meme_sites(meme_json, float(a.meme_p))
-
-        provenance["pathways"].append(
-            {
-                "pathway": pathway_name,
-                "method": method,
-                "trim_state": trim_state,
-                "tree": str(tree_path),
-                "tree_source": tree_source,
-                "tree_sha256": hash_file(tree_path),
-                "alignment": str(cds_aln),
-                "alignment_sha256": hash_file(cds_aln),
-                "rst": str(rst_path),
-                "rst_sha256": hash_file(rst_path),
-                "mlc": str(mlc_path),
-                "mlc_sha256": hash_file(mlc_path),
-                "ctl": str(ctl_path) if ctl_path.exists() else "",
-                "ctl_sha256": hash_file(ctl_path) if ctl_path.exists() else "",
-            }
-        )
-
         bs_rows = read_tsv(branchsite_tsv)
         signif_key = detect_signif_key(bs_rows)
         selected = []
@@ -564,7 +557,26 @@ def main() -> None:
             if signif_key and parse_bool(str(row.get(signif_key, ""))):
                 selected.append(fg)
 
+        pathway_provenance = {
+            "pathway": pathway_name,
+            "method": method,
+            "trim_state": trim_state,
+            "tree": str(tree_path),
+            "tree_source": tree_source,
+            "tree_sha256": hash_file(tree_path),
+            "alignment": str(cds_aln),
+            "alignment_sha256": hash_file(cds_aln),
+            "rst": "",
+            "rst_sha256": "",
+            "mlc": "",
+            "mlc_sha256": "",
+            "ctl": "",
+            "ctl_sha256": "",
+        }
+
         if not selected:
+            pathway_provenance["asr_status"] = "not_needed"
+            provenance["pathways"].append(pathway_provenance)
             summary_rows.append(
                 {
                     "gene": a.gene,
@@ -583,6 +595,39 @@ def main() -> None:
                 }
             )
             continue
+
+        asr_dir, rst_path, mlc_path, ensured_codeml_version = ensure_asr(
+            pathway,
+            outdir,
+            str(a.codeml),
+            int(a.codonfreq),
+            str(a.min_paml_version),
+            str(a.codeml_version_override),
+        )
+        ctl_path = asr_dir / "codeml_asr.ctl"
+        if ensured_codeml_version not in {"", "not_checked"}:
+            provenance["codeml_version"] = ensured_codeml_version
+        pathway_provenance.update(
+            {
+                "rst": str(rst_path),
+                "rst_sha256": hash_file(rst_path),
+                "mlc": str(mlc_path),
+                "mlc_sha256": hash_file(mlc_path),
+                "ctl": str(ctl_path) if ctl_path.exists() else "",
+                "ctl_sha256": hash_file(ctl_path) if ctl_path.exists() else "",
+                "asr_status": "available",
+            }
+        )
+        provenance["pathways"].append(pathway_provenance)
+
+        tree = read_tree(tree_path)
+        parent_map = build_parent_map(tree)
+        internal_ids = assign_internal_ids(tree)
+        rst_tree = extract_numbered_tree_from_rst(rst_path)
+        rst_node_seqs = parse_rst_node_sequences(rst_path)
+        canon_to_rst = map_internal_ids_to_rst(tree, internal_ids, rst_tree)
+        codon_records = load_codon_alignment(cds_aln)
+        meme_sites = parse_meme_sites(meme_json, float(a.meme_p))
 
         for raw_fg in selected:
             status = "ok"

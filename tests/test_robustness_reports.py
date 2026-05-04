@@ -147,3 +147,48 @@ def test_generate_robustness_reports_for_six_method_trim_pathways(tmp_path):
     latex_text = latex_out.read_text(encoding="utf-8")
     assert r"aBSREL\_branch" in latex_text
     assert r"aBSREL\\_branch" not in latex_text
+
+
+def test_generate_robustness_reports_marks_skipped_asr_as_not_completed(tmp_path):
+    outdir = tmp_path / "run"
+    _seed_pathway(outdir, "babappalign", "raw")
+    _write(
+        outdir / "asr" / "babappalign" / "raw" / "asr_done.json",
+        json.dumps({"status": "skipped", "reason": "asr_disabled"}) + "\n",
+    )
+
+    summary_dir = outdir / "summary"
+    matrix_out = summary_dir / "robustness_matrix.tsv"
+    consensus_out = summary_dir / "robustness_consensus.tsv"
+    narrative_out = summary_dir / "robustness_narrative.txt"
+    comparative_out = summary_dir / "comparative_reproducibility_summary.txt"
+    latex_out = summary_dir / "robustness_publication_table.tex"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "babappasnake.scripts.generate_robustness_reports",
+            "--outdir",
+            str(outdir),
+            "--pathways",
+            "babappalign:raw",
+            "--meme-p",
+            "0.05",
+            "--matrix-out",
+            str(matrix_out),
+            "--consensus-out",
+            str(consensus_out),
+            "--narrative-out",
+            str(narrative_out),
+            "--comparative-out",
+            str(comparative_out),
+            "--latex-out",
+            str(latex_out),
+        ],
+        check=True,
+    )
+
+    with open(matrix_out, encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh, delimiter="\t"))
+    assert rows and rows[0]["asr_completed"] == "no"

@@ -1,12 +1,55 @@
 # BABAPPASnake
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048331.svg)](https://doi.org/10.5281/zenodo.19048331)
 
-`babappasnake` is a reproducible command-line workflow for episodic positive selection analysis on one orthogroup at a time.
-It is designed for practical comparative genomics: resumable runs, interactive stepwise control, and robustness summaries across alignment and trimming choices.
+`babappasnake` is a command-line workflow for episodic positive selection analysis on one orthogroup at a time. It is built for practical comparative genomics: reproducible run directories, guided stepwise execution, resumable restarts after interruption, and robustness summaries across multiple alignment and trimming pathways.
 
-## Quick Start
+This README is the user manual for the current CLI and workflow behavior.
 
-### 1) Install tools and package
+## Contents
+
+1. [What The Pipeline Does](#what-the-pipeline-does)
+2. [Installation And Environment](#installation-and-environment)
+3. [Input Requirements](#input-requirements)
+4. [Orthogroup Discovery Modes](#orthogroup-discovery-modes)
+5. [Running The Pipeline](#running-the-pipeline)
+6. [Resume And Recovery](#resume-and-recovery)
+7. [Workflow Stages](#workflow-stages)
+8. [Alignment And Robustness Design](#alignment-and-robustness-design)
+9. [Recombination, Selection, And ASR](#recombination-selection-and-asr)
+10. [Outputs And Run Directory Layout](#outputs-and-run-directory-layout)
+11. [CLI Reference](#cli-reference)
+12. [Troubleshooting](#troubleshooting)
+13. [Developer Notes](#developer-notes)
+14. [License](#license)
+
+## What The Pipeline Does
+
+A typical full run performs these stages:
+
+1. Define a one-to-one orthogroup from a protein query and a proteome panel.
+2. Map user-provided CDS to the selected orthogroup proteins with coding-quality filters.
+3. Build protein and codon alignments across one or more alignment methods.
+4. Run both `raw` and `clipkit` pathway variants for robustness.
+5. Infer pathway-specific trees with IQ-TREE.
+6. Optionally root trees with an outgroup text query.
+7. Optionally screen for recombination with HyPhy GARD.
+8. Run HyPhy aBSREL and MEME.
+9. Select branch-site foregrounds dynamically from aBSREL output.
+10. Run branch-site codeml.
+11. Optionally run pathway-level codeml ASR.
+12. Optionally extract ancestor and descendant sequences plus branch substitutions.
+13. Write pathway summaries, robustness reports, and run provenance.
+
+Design assumptions:
+
+- The workflow operates on one orthogroup at a time.
+- CDS can be unavailable at the start. The pipeline supports a protein-first checkpointed workflow.
+- Outgroup is optional. If it is absent or unusable, downstream analysis continues with the unrooted tree.
+- Robustness mode is always enforced internally as `raw + clipkit`, even if you request a single trimming mode.
+
+## Installation And Environment
+
+### Recommended one-command environment
 
 ```bash
 conda create -n babappasnake -c conda-forge -c bioconda \
@@ -15,170 +58,130 @@ conda activate babappasnake
 pip install babappasnake
 ```
 
-### 2) Run (non-interactive)
+### External tools by feature
 
-```bash
-babappasnake \
-  --prot /path/to/proteomes \
-  --query /path/to/query.fasta \
-  --cds /path/to/orthogroup_cds.fasta \
-  --alignment-methods 4 \
-  --outgroup culex \
-  --outdir run01 \
-  --threads 12 \
-  --interactive no \
-  --guided no
-```
-
-### 3) Run (interactive guided mode)
-
-```bash
-babappasnake
-```
-
-This prompts step by step, shows what each stage does, and supports `run/skip/stop` per stage.
-
-## Manual Contents
-
-1. [What The Pipeline Does](#what-the-pipeline-does)
-2. [Installation And Environment](#installation-and-environment)
-3. [Input Requirements](#input-requirements)
-4. [Orthogroup Discovery Strategy](#orthogroup-discovery-strategy)
-5. [Running Modes](#running-modes)
-6. [CDS Mapping And QC](#cds-mapping-and-qc)
-7. [Alignment, Trimming, Tree, And Selection Steps](#alignment-trimming-tree-and-selection-steps)
-8. [ASR Extraction Of Selected Branches](#asr-extraction-of-selected-branches)
-9. [Outputs And Directory Layout](#outputs-and-directory-layout)
-10. [Resume, Rerun, And Reproducibility](#resume-rerun-and-reproducibility)
-11. [CLI Reference](#cli-reference)
-12. [Troubleshooting](#troubleshooting)
-13. [Developer And Release Notes](#developer-and-release-notes)
-
-## What The Pipeline Does
-
-A complete run performs these stages:
-
-1. Build orthogroup candidates from your query and proteomes.
-2. Select the best orthogroup strategy by strict 1:1 ortholog support.
-3. Map user CDS to selected proteins with coding-quality filtering.
-4. Build protein alignments with selected MSA engines.
-5. Build codon alignments (native for BABAPPAlign; robust back-translation for MAFFT/PRANK).
-6. Run both trimming states (`raw` and `clipkit`) for robustness.
-7. Infer trees with IQ-TREE for each `(method, trim_state)` pathway.
-8. Optionally root trees with outgroup text query.
-9. Optionally run HyPhy GARD recombination screening per pathway.
-10. Run HyPhy aBSREL + MEME per pathway.
-11. Select foreground branches dynamically from aBSREL.
-12. Run branch-site codeml per selected foreground.
-13. Run codeml ASR per pathway.
-14. Extract ancestor/descendant sequences and substitutions for selected branches.
-15. Write pathway summaries plus cross-pathway robustness reports.
-
-## Installation And Environment
-
-### Required external tools
+Always needed for a complete end-to-end run:
 
 - `blastp`
 - `makeblastdb`
-- `orthofinder`
-- `iqtree` (or `iqtree2` or `iqtree3`)
+- `iqtree` or `iqtree2` or `iqtree3`
 - `hyphy`
-- `codeml` (from `paml`)
+- `codeml` from `paml`
 - `clipkit`
 
-### Optional but strongly recommended
+Needed only for selected orthogroup modes:
 
-- `mafft` (if using alignment method 2 or 4)
-- `prank` (if using alignment method 3 or 4)
+- `orthofinder` for `--orthogroup-method orthofinder`
+- `orthofinder` for `--orthogroup-method rbh_fallback`
 
-### Python package
+Needed only for selected alignment methods:
 
-`babappalign` is installed automatically as a Python dependency of `babappasnake`.
+- `mafft` when `--alignment-methods` is `2` or `4`
+- `prank` when `--alignment-methods` is `3` or `4`
+
+Python-side note:
+
+- `babappalign` is installed automatically as a dependency of `babappasnake`.
 
 ### Verify installation
 
 ```bash
 babappasnake --help
-which blastp makeblastdb orthofinder iqtree iqtree2 iqtree3 hyphy codeml clipkit
-which babappalign mafft prank
+which blastp makeblastdb iqtree iqtree2 iqtree3 hyphy codeml clipkit
+which orthofinder mafft prank
+which babappasnake
 ```
 
 ## Input Requirements
 
-### `--prot` proteomes directory
+### `--prot`
 
-- Directory of protein FASTA files, one file per species.
-- Supported extensions: `.fa`, `.faa`, `.fasta` (case-insensitive).
-- Hidden/macOS metadata files are ignored (e.g. `.DS_Store`, `._*`, hidden files).
+Directory of protein FASTA files, one file per species.
+
+Requirements and behavior:
+
+- Supported extensions are `.fa`, `.faa`, and `.fasta`, case-insensitive.
+- Hidden files and macOS metadata sidecars such as `._*` and `.DS_Store` are ignored.
 - Empty or malformed FASTA files are skipped with warnings.
 
-### `--query` query FASTA
+### `--query`
 
-- Protein FASTA with exactly one query sequence.
+Protein FASTA containing exactly one query sequence.
 
-### `--cds` CDS FASTA
+### `--cds`
 
-- Optional on first run.
-- If not provided initially, workflow stops after orthogroup definition and writes `WAITING_FOR_CDS.txt`.
-- Add CDS file at `OUTDIR/user_supplied/orthogroup_cds.fasta` and rerun.
+Optional on the first run.
 
-### `--outgroup` optional
+Behavior:
 
-- String used to root tree by case-insensitive substring match on tip headers.
-- If omitted, or if the query is too broad / does not match, unrooted trees are used downstream.
+- If CDS is supplied at the start, the workflow can proceed through codon, tree, HyPhy, codeml, and summary stages in one run.
+- If CDS is not supplied, the workflow stops after orthogroup definition and writes `orthogroup/WAITING_FOR_CDS.txt`.
+- You can then place CDS at `OUTDIR/user_supplied/orthogroup_cds.fasta` and resume.
 
-## Orthogroup Discovery Strategy
+### `--outgroup`
 
-### Default strategy (`--orthogroup-method rbh`)
+Optional text query used to root pathway trees by case-insensitive substring matching against tip labels.
 
-In default mode, orthogroup selection uses RBH only:
+Behavior:
 
-1. Run RBH stage.
-2. Compute strict 1:1 ortholog count from RBH output.
-3. If RBH yields zero strict 1:1 orthologs, stop with explicit error.
+- If omitted, rooting is skipped and the unrooted tree is propagated downstream.
+- If provided but unmatched or too broad, rooting falls back safely to the unrooted tree instead of crashing the run.
 
-### Fallback comparison mode (`--orthogroup-method rbh_fallback`)
+## Orthogroup Discovery Modes
 
-This preserves the previous behavior as an explicit opt-in:
+### Default: `--orthogroup-method rbh`
 
-1. Run RBH stage.
-2. Run OrthoFinder stage.
-3. Compute strict 1:1 ortholog count for each.
-4. Select backend with larger strict 1:1 count.
+RBH-only mode.
+
+Behavior:
+
+1. Run reciprocal best-hit ortholog recovery.
+2. Retain strict one-to-one orthologs only.
+3. Stop with an explicit error if no usable strict one-to-one orthogroup is recovered.
+
+This is the default and recommended starting mode.
+
+### Direct OrthoFinder: `--orthogroup-method orthofinder`
+
+OrthoFinder-only mode.
+
+Behavior:
+
+1. Run OrthoFinder.
+2. BLAST the query against OrthoFinder orthogroup-member proteins.
+3. Rank orthogroups by query support.
+4. Retain strict one-to-one orthologs only.
+
+### Comparison fallback: `--orthogroup-method rbh_fallback`
+
+This preserves the older compare-and-choose behavior.
+
+Behavior:
+
+1. Run RBH.
+2. Run OrthoFinder.
+3. Compute strict one-to-one support for both results.
+4. Keep the result with the stronger strict one-to-one count.
 5. If tied, keep RBH deterministically.
-6. If both have zero strict 1:1 orthologs, stop with explicit error.
 
-The selected backend and counts are printed explicitly.
+### OrthoFinder query mapping details
 
-### How OrthoFinder query mapping is done
+The workflow does not assume that the original query ID is directly present inside an OrthoFinder orthogroup. Instead it does a query-to-members mapping step:
 
-OrthoFinder query mapping is BLAST-based, not query-ID membership based:
-
-1. Parse OrthoFinder `Orthogroups.tsv` to load all groups and members.
-2. Build a combined FASTA of orthogroup-member proteins with subject IDs encoded as:
-   `<orthogroup>||<species>||<member>`
-3. Run `blastp(query -> combined orthogroup members)`.
+1. Parse `Orthogroups.tsv`.
+2. Build a combined FASTA of orthogroup-member proteins.
+3. BLAST the query against that combined FASTA.
 4. Filter by query coverage threshold.
-5. Rank orthogroups by:
-   - number of species with passing hits,
-   - summed best bitscore per species,
-   - top bitscore,
-   - orthogroup ID (stable tie-break).
-6. Select top-ranked orthogroup for downstream extraction.
+5. Rank orthogroups by cross-species support and bitscore.
+6. Extract the top supported orthogroup and apply strict one-to-one filtering.
 
-### Strict 1:1 rule used downstream
+### Strict one-to-one rule
 
-A species contributes only if exactly one ortholog is retained for that species.
-This guarantees no duplicate ortholog entries for the same species in the final selected orthogroup.
+A species contributes to the final orthogroup only when exactly one ortholog is retained for that species. This prevents duplicate same-species entries in downstream alignments and trees.
 
-### Direct OrthoFinder mode (`--orthogroup-method orthofinder`)
+## Running The Pipeline
 
-- Runs OrthoFinder selection directly.
-- Uses the same BLAST-based query-to-orthogroup mapping and strict 1:1 filtering.
-
-## Running Modes
-
-## Interactive guided mode (default)
+### Guided interactive mode
 
 ```bash
 babappasnake
@@ -186,21 +189,24 @@ babappasnake
 
 Behavior:
 
-- Prompts for required settings.
-- Executes one rule at a time.
-- Asks `run/skip/stop` for each stage.
-- Shows step outputs and previews.
-- Auto-skips already-completed steps safely.
+- Prompts for run settings.
+- Executes the workflow step by step.
+- Shows step descriptions, previews, and output summaries.
+- Lets you choose `run`, `skip`, or `stop` at each step where appropriate.
 
-Important guided-mode defaults:
+Important defaults in guided mode:
 
-- Orthogroup backend defaults to `rbh` in interactive mode.
-- You can choose `rbh`, `orthofinder`, or `rbh_fallback`.
-- Trimming is forced to robustness mode (`raw + clipkit`) for comparative summaries.
-- CDS is asked only after orthogroup stage finishes.
-- Outgroup prompt comes after CDS prompt and is optional.
+- Orthogroup method defaults to `rbh`.
+- Alignment methods default to `4` which means all three aligners.
+- Trimming is forced internally to robustness mode: `raw + clipkit`.
+- Recombination defaults to `none`.
+- ASR defaults to `yes`.
+- CDS is requested only after orthogroup definition.
+- Outgroup is requested after CDS handling and remains optional.
 
-## Non-interactive mode
+### Non-interactive batch mode
+
+Use this for scripted or HPC-style runs:
 
 ```bash
 babappasnake \
@@ -213,26 +219,52 @@ babappasnake \
   --guided no
 ```
 
-Use this for scripted runs and HPC wrappers.
-
-### Example: enable optional GARD screening
+### Example: RBH-only run with ASR disabled
 
 ```bash
 babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
-  --alignment-methods 4 \
-  --recombination gard \
-  --gard-mode Faster \
-  --gard-rate-classes 3 \
-  --outdir run01_gard \
+  --orthogroup-method rbh \
+  --run-asr no \
+  --outdir run_rbh_no_asr \
   --threads 12 \
   --interactive no \
   --guided no
 ```
 
-## Two-stage run (no CDS at start)
+### Example: OrthoFinder-only run
+
+```bash
+babappasnake \
+  --prot /path/to/proteomes \
+  --query /path/to/query.fasta \
+  --cds /path/to/orthogroup_cds.fasta \
+  --orthogroup-method orthofinder \
+  --outdir run_orthofinder \
+  --threads 12 \
+  --interactive no \
+  --guided no
+```
+
+### Example: enable GARD
+
+```bash
+babappasnake \
+  --prot /path/to/proteomes \
+  --query /path/to/query.fasta \
+  --cds /path/to/orthogroup_cds.fasta \
+  --recombination gard \
+  --gard-mode Faster \
+  --gard-rate-classes 3 \
+  --outdir run_gard \
+  --threads 12 \
+  --interactive no \
+  --guided no
+```
+
+### Two-stage run when CDS is not available initially
 
 Stage 1:
 
@@ -245,48 +277,118 @@ babappasnake \
   --guided no
 ```
 
-After stage 1 completes, add:
+After orthogroup definition, provide the CDS file and continue:
 
-- `run01/user_supplied/orthogroup_cds.fasta`
+```bash
+babappasnake --resume --outdir run01 --cds /path/to/orthogroup_cds.fasta
+```
 
-Then rerun same command to resume.
+## Resume And Recovery
 
-## CDS Mapping And QC
+Use resume whenever a run stops unexpectedly or intentionally:
 
-During CDS mapping:
+```bash
+babappasnake --resume --outdir run01
+```
 
-1. Lowercase intronic segments are clipped out.
-2. Uppercase ORF window is retained.
-3. Must start with uppercase start codon and end with uppercase stop codon.
-4. Frame consistency checks are applied.
-5. Failing CDS entries are excluded with warnings.
+Typical reasons to resume:
 
-Outputs:
+- workflow failure
+- external tool failure
+- terminal closure
+- power interruption
+- machine restart
+- manual stop after the orthogroup checkpoint
 
-- `mapped_cds/mapped_orthogroup_cds.fasta`
-- `mapped_cds/mapped_orthogroup_proteins.fasta`
-- `mapped_cds/cds_protein_mapping.tsv`
+What `--resume` does:
 
-## Alignment, Trimming, Tree, And Selection Steps
+- reloads `OUTDIR/config.yaml`
+- reuses saved analysis settings
+- clears stale Snakemake lock state for that run directory
+- continues incomplete work instead of restarting from scratch
 
-## Alignment methods
+Guided resume behavior:
 
-`--alignment-methods` options:
+- saved and detected completed steps are skipped automatically
+- the session restarts near the interruption point
+
+Non-guided resume behavior:
+
+- Snakemake reruns incomplete work only
+
+Files used for resume:
+
+- `OUTDIR/config.yaml`
+- `OUTDIR/.babappasnake/resume_state.json`
+
+Allowed resume-time overrides:
+
+- `--cds PATH`
+- `--outgroup TEXT`
+- `--threads INT`
+- `--guided {yes,no}`
+- `--snake-args "..." `
+
+Analysis settings that define workflow structure are intentionally not changeable on resume. For example, do not expect `--resume` to accept a new orthogroup method, new alignment mode, new recombination mode, or new ASR setting for an existing run directory.
+
+## Workflow Stages
+
+1. `rbh_orthogroup`
+   Build the selected orthogroup by the configured orthogroup backend.
+2. `map_cds`
+   Map CDS to selected proteins and filter low-quality CDS.
+3. `align_proteins_all_methods`
+   Build protein alignments.
+4. `align_cds_all_methods`
+   Build codon alignments.
+5. `prepare_branch_inputs_all_pathways`
+   Expand each method into `raw` and `clipkit` analysis pathways.
+6. `gard_all_pathways`
+   Optional recombination screening.
+7. `iqtree_ml_all_pathways`
+   Infer pathway trees.
+8. `root_iqtree_outgroup_all_pathways`
+   Root trees when possible, otherwise propagate unrooted trees.
+9. `hyphy_exploratory_all_pathways`
+   Run aBSREL and MEME.
+10. `parse_foregrounds_all_pathways`
+    Select significant foreground branches from aBSREL.
+11. `prepare_foreground_trees_all_pathways`
+    Build branch-labeled trees for branch-site codeml.
+12. `branchsite_batch_all_pathways`
+    Run branch-site codeml and BH-correct results.
+13. `codeml_asr_all_pathways`
+    Optional pathway-level ASR.
+14. `extract_selected_branch_ancestors`
+    Optional branch-level ancestral and descendant sequence extraction.
+15. `final_summary_all_pathways`
+    Write pathway-specific episodic selection summaries.
+16. `robustness_reports`
+    Write cross-pathway robustness outputs.
+17. `write_run_provenance`
+    Write machine-readable provenance for the run.
+
+## Alignment And Robustness Design
+
+### Alignment methods
+
+`--alignment-methods` choices:
 
 - `1`: `babappalign`
 - `2`: `mafft`
 - `3`: `prank`
-- `4`: all three
+- `4`: `babappalign`, `mafft`, and `prank`
 
-## Trimming model
+### Trimming behavior
 
-Pipeline is enforced to run both trim states for robustness:
+The workflow accepts `--trim-strategy`, but runtime robustness mode is always enforced internally as:
 
 - `raw`
 - `clipkit`
 
-So each selected method is expanded into two pathways.
-Example for method `4`:
+This means each selected alignment method expands into two pathways.
+
+Example for `--alignment-methods 4`:
 
 - `babappalign_raw`
 - `babappalign_clipkit`
@@ -295,78 +397,125 @@ Example for method `4`:
 - `prank_raw`
 - `prank_clipkit`
 
-## Tree inference and rooting
+This is deliberate. Robustness outputs assume both untrimmed and trimmed pathway variants are available.
 
-- IQ-TREE runs per pathway.
-- Outgroup rooting is optional and applied if query text is supplied and matched.
-- If no outgroup is supplied/matched, downstream continues with unrooted tree.
+## Recombination, Selection, And ASR
 
-## Optional recombination screening (HyPhy GARD)
+### Tree inference and rooting
 
-- Controlled by `--recombination {none,gard,auto}` (default: `none`).
-- `none`: skip recombination screening (legacy/default behavior).
-- `gard`: run HyPhy GARD per active `(method, trim_state)` pathway.
-- `auto`: currently an alias of `gard`.
-- Additional controls:
-  - `--gard-mode {Normal,Faster}` (default: `Faster`)
-  - `--gard-rate-classes INT` (default: `3`)
+- IQ-TREE runs once per active pathway.
+- Rooting is optional.
+- If outgroup matching fails, the workflow continues with the unrooted tree.
 
-Output locations:
+### Optional recombination screening with GARD
+
+Controlled by `--recombination {none,gard,auto}`:
+
+- `none`: do not run GARD
+- `gard`: run HyPhy GARD
+- `auto`: currently an alias of `gard`
+
+Additional controls:
+
+- `--gard-mode {Normal,Faster}`
+- `--gard-rate-classes INT`
+
+GARD outputs:
 
 - `recombination/<method>/<trim_state>/gard/gard.json`
 - `recombination/<method>/<trim_state>/gard/gard_summary.json`
 - `recombination/<method>/<trim_state>/gard/gard.stdout.txt`
 - `recombination/<method>/<trim_state>/gard/gard.stderr.txt`
 
-Interpretation note:
+Current interpretation:
 
-- In the current implementation, GARD is a screening/reporting module.
-- Downstream branch-site/codeml analyses remain full-length by default unless explicit fragment-aware routing is added in a future release.
+- GARD is used as a screening and reporting layer.
+- Downstream branch-site codeml is still run on the full-length pathway alignment unless fragment-aware routing is added in a future release.
 
-## HyPhy and branch-site selection
+### HyPhy and branch-site foreground selection
 
 - aBSREL and MEME run per pathway.
-- Foregrounds are selected by dynamic aBSREL threshold:
+- Foregrounds are selected dynamically from aBSREL.
+- Default aBSREL dynamic threshold settings:
   - start `0.05`
   - increment `0.01`
   - cap `0.2`
-- Selected foregrounds feed branch-site codeml.
-- Branch-site outputs are BH-corrected.
+- Selected foregrounds are passed to branch-site codeml.
+- Branch-site results are BH-corrected.
 
-## ASR Extraction Of Selected Branches
+### Optional ASR block
 
-After branch-site selection, `extract_selected_branch_ancestors` does:
+When `--run-asr yes`, the workflow:
 
-1. Map selected branches onto canonical tree edges `(parent_node -> child_node)`.
-2. Recover ancestor and descendant CDS/AA sequences.
-3. Compute codon and amino-acid substitutions per selected branch.
-4. Annotate overlaps with MEME/BEB where available.
-5. Write branch-level summary and provenance.
+1. runs codeml ASR per pathway
+2. maps selected branches to parent and child nodes
+3. extracts ancestor and descendant CDS and amino-acid sequences
+4. computes branch substitutions
+5. annotates overlaps with MEME and BEB where available
 
-This stage is model-based reconstruction from codeml outputs.
+When `--run-asr no`:
 
-## Outputs And Directory Layout
+- the ASR extraction block is skipped entirely
+- HyPhy, branch-site, summaries, robustness reports, and run provenance still complete
+- per-pathway `asr_done.json` files are still written with `status: skipped`
+- the robustness matrix reports ASR as not completed rather than falsely completed
 
-All outputs are inside `--outdir`.
+## Outputs And Run Directory Layout
 
-High-value files:
+All outputs live inside `--outdir`.
 
+### Early-stage outputs
+
+- `inputs/query.fasta`
+- `inputs/proteomes/`
 - `orthogroup/orthogroup_proteins.fasta`
 - `orthogroup/orthogroup_headers.txt`
 - `orthogroup/rbh_summary.tsv`
+- `orthogroup/WAITING_FOR_CDS.txt`
+- `user_supplied/orthogroup_cds.fasta`
 - `mapped_cds/cds_protein_mapping.tsv`
-- `alignments/<method>/<trim_state>/...`
+
+### Alignment and tree outputs
+
+- `alignments/<method>/orthogroup_proteins.protein.aln.fasta`
+- `alignments/<method>/mapped_orthogroup_cds.codon.aln.fasta`
+- `alignments/<method>/<trim_state>/orthogroup_proteins.analysis.fasta`
+- `alignments/<method>/<trim_state>/mapped_orthogroup_cds.analysis.fasta`
 - `tree/<method>/<trim_state>/orthogroup.treefile`
 - `tree/<method>/<trim_state>/orthogroup.rooted.treefile`
+
+### Selection outputs
+
 - `hyphy/<method>/<trim_state>/absrel.json`
 - `hyphy/<method>/<trim_state>/meme.json`
+- `hyphy/<method>/<trim_state>/hyphy_done.json`
 - `hyphy/<method>/<trim_state>/significant_foregrounds.tsv`
-- `recombination/<method>/<trim_state>/gard/gard_summary.json`
+- `hyphy/<method>/<trim_state>/foreground_threshold.json`
+- `branchsite/<method>/<trim_state>/foreground_trees.tsv`
 - `branchsite/<method>/<trim_state>/branchsite_results.tsv`
+
+### ASR outputs
+
+Always present per pathway:
+
 - `asr/<method>/<trim_state>/asr_done.json`
+
+Produced only when `--run-asr yes`:
+
+- `asr/<method>/<trim_state>/mlc_asr.txt`
+- `asr/<method>/<trim_state>/rst`
 - `asr/branch_to_nodes.tsv`
+- `asr/ancestor_sequences_cds.fasta`
+- `asr/ancestor_sequences_aa.fasta`
+- `asr/descendant_sequences_cds.fasta`
+- `asr/descendant_sequences_aa.fasta`
 - `asr/branch_substitutions.tsv`
 - `asr/selected_branch_asr_summary.tsv`
+- `asr/asr_extraction_provenance.json`
+- `asr/asr_done.json`
+
+### Summary and provenance outputs
+
 - `summary/<method>/<trim_state>/episodic_selection_summary.txt`
 - `summary/robustness_matrix.tsv`
 - `summary/robustness_consensus.tsv`
@@ -374,102 +523,138 @@ High-value files:
 - `summary/comparative_reproducibility_summary.txt`
 - `summary/robustness_publication_table.tex`
 - `summary/run_provenance.json`
-
-Top-level compatibility aliases:
-
 - `summary/episodic_selection_summary.txt`
-- `asr/asr_done.json`
 
-## Resume, Rerun, And Reproducibility
+### Internal resume state
 
-- Re-running the same command resumes existing work.
-- In guided mode, completed steps are auto-detected and skipped.
-- Final provenance is written to `summary/run_provenance.json`.
-- ASR extraction provenance is written to `asr/asr_extraction_provenance.json`.
+- `.babappasnake/resume_state.json`
+- `.snakemake/`
 
 ## CLI Reference
 
-Basic form:
+Basic form for a fresh run:
 
 ```text
 babappasnake --prot PROTEOMES_DIR --query QUERY_FASTA [options]
 ```
 
-Core options:
+Basic form for a resumed run:
 
+```text
+babappasnake --resume --outdir RUN_DIR [resume overrides]
+```
+
+### Core options
+
+- `--prot PATH`
+- `--query PATH`
 - `--cds PATH`
-- `--orthogroup-method {rbh,orthofinder,rbh_fallback}`
-- `--alignment-methods {1,2,3,4}`
-- `--outgroup TEXT`
 - `--outdir PATH`
-- `--threads INT`
 - `--interactive {yes,no}`
 - `--guided {yes,no}`
+- `--resume`
+- `--snake-args "..."`
 
-Selection and model options:
+### Orthogroup and alignment options
 
-- `--coverage FLOAT` (RBH/BLAST mapping coverage threshold)
+- `--orthogroup-method {rbh,orthofinder,rbh_fallback}`
+- `--coverage FLOAT`
+- `--alignment-methods {1,2,3,4}`
+- `--trim-strategy {raw,clipkit,both}`
+- `--use-clipkit {yes,no}`
+- `--clipkit-mode-protein TEXT`
+- `--clipkit-mode-codon TEXT`
+
+Practical note:
+
+- `--trim-strategy` and `--use-clipkit` are accepted, but runtime robustness mode is still forced to `both`.
+
+### Tree and selection options
+
+- `--outgroup TEXT`
+- `--threads INT`
 - `--iqtree-bootstrap INT`
 - `--iqtree-bnni {yes,no}`
 - `--iqtree-model TEXT`
-- `--absrel-branches TEXT`
-- `--meme-branches TEXT`
-- `--codeml-codonfreq INT`
 - `--recombination {none,gard,auto}`
 - `--gard-mode {Normal,Faster}`
 - `--gard-rate-classes INT`
+- `--absrel-branches TEXT`
+- `--meme-branches TEXT`
+- `--codeml-codonfreq INT`
+- `--run-asr {yes,no}`
 - `--absrel-p FLOAT`
 - `--absrel-dynamic-start FLOAT`
 - `--absrel-dynamic-step FLOAT`
 - `--absrel-dynamic-max FLOAT`
 - `--meme-p FLOAT`
-- `--clipkit-mode-protein TEXT`
-- `--clipkit-mode-codon TEXT`
-- `--snake-args "..."`
-
-Compatibility options:
-
-- `--trim-strategy {raw,clipkit,both}` accepted, but runtime robustness mode is enforced to `both`.
-- `--use-clipkit {yes,no}` retained for backward compatibility.
 
 ## Troubleshooting
 
-## "Missing required external tools"
+### Run stops at `WAITING_FOR_CDS.txt`
 
-Install missing binaries in the active environment and verify with `which`.
+This is expected when CDS was not supplied yet.
 
-## Run stops at `WAITING_FOR_CDS.txt`
+Fix:
 
-This is expected when CDS is not yet supplied.
-Add `user_supplied/orthogroup_cds.fasta` and rerun.
+1. provide `OUTDIR/user_supplied/orthogroup_cds.fasta`
+2. run `babappasnake --resume --outdir OUTDIR`
 
-## OrthoFinder/RBH finds no usable orthogroup
+### Outgroup was not available at the start
 
-Pipeline stops explicitly if both strategies yield zero strict 1:1 ortholog support.
-Check proteome quality, query quality, and species composition.
+This is supported.
 
-## macOS metadata files in proteomes
+Behavior:
 
-You can clean sidecar files before running:
+- the run does not need to crash
+- downstream continues with the unrooted tree when no usable outgroup is present
+
+### Interrupted run after crash, reboot, or power loss
+
+Use:
+
+```bash
+babappasnake --resume --outdir OUTDIR
+```
+
+The workflow will reload saved settings, clear stale lock state, and continue incomplete work.
+
+### OrthoFinder or RBH finds no usable orthogroup
+
+The pipeline stops explicitly when strict one-to-one recovery fails.
+
+Check:
+
+- query quality
+- proteome quality
+- taxon sampling
+- whether the query is biologically represented in the panel
+
+### macOS metadata files inside the proteome directory
+
+They are ignored automatically, but you can clean them if you want:
 
 ```bash
 find /path/to/proteomes -type f \( -name '._*' -o -name '.DS_Store' \) -delete
 ```
 
-## codeml warnings
+### codeml or HyPhy warnings
 
-Warnings are tolerated when required output files are present.
-Hard failure occurs only when mandatory result files are missing.
+Warnings are tolerated when required result files are present. Hard failure occurs when required outputs are missing or unusable.
 
-## Developer And Release Notes
+### `--resume` refuses my new analysis flags
 
-## Local editable install
+This is intentional. Resume is designed to continue an existing run, not mutate its workflow definition midway through. Start a new `--outdir` if you want different analysis settings.
+
+## Developer Notes
+
+### Editable install
 
 ```bash
 pip install -e .
 ```
 
-## Build package
+### Build distributions
 
 ```bash
 python -m pip install --upgrade build twine
@@ -477,19 +662,20 @@ python -m build --sdist --wheel
 twine check dist/*
 ```
 
-## Publish to PyPI
+### Publish
 
 ```bash
 twine upload dist/*
 ```
 
-## Release checklist
+### Release checklist
 
-1. Update version in `pyproject.toml`.
-2. Run tests.
-3. Build distributions.
-4. Publish to PyPI.
-5. Push Git tag and GitHub release.
+1. Update version in `pyproject.toml` and `babappasnake/__init__.py`.
+2. Run the test suite.
+3. Build source and wheel distributions.
+4. Check distributions.
+5. Publish to PyPI.
+6. Tag the release in Git.
 
 ## License
 

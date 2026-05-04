@@ -86,6 +86,19 @@ def read_absrel_tested_branches(path: Path) -> int:
     return count
 
 
+def read_asr_completion_state(path: Path) -> str:
+    if not path.exists() or path.stat().st_size == 0:
+        return "missing"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        status = str(payload.get("status", "")).strip().lower()
+        if status.startswith("skipped") or status in {"disabled", "not_run"}:
+            return "skipped"
+    except Exception:
+        pass
+    return "completed"
+
+
 def extract_meme_hits(payload: object, threshold: float) -> tuple[int, set[str]]:
     count = 0
     sites: set[str] = set()
@@ -284,18 +297,20 @@ def main() -> None:
                 gard_note = "GARD summary exists but could not be parsed."
 
         missing = []
+        asr_state = read_asr_completion_state(asr_done)
         required_map = {
             "protein_alignment": protein_path,
             "codon_alignment": cds_path,
             "rooted_tree": rooted_tree,
             "absrel_tsv": absrel_tsv,
             "branchsite_tsv": branchsite_tsv,
-            "asr_done": asr_done,
             "hyphy_done": hyphy_done,
         }
         for key, path in required_map.items():
             if not path.exists() or path.stat().st_size == 0:
                 missing.append(key)
+        if asr_state == "missing":
+            missing.append("asr_done")
 
         hyphy_failed = False
         if hyphy_done.exists() and hyphy_done.stat().st_size > 0:
@@ -331,7 +346,7 @@ def main() -> None:
                 "n_branchsite_foregrounds_tested": str(len(branchsite_rows)),
                 "n_branchsite_significant_after_bh": str(len(branchsite_sig)),
                 "branchsite_significant_foregrounds": ";".join(branchsite_sig),
-                "asr_completed": "yes" if asr_done.exists() and asr_done.stat().st_size > 0 else "no",
+                "asr_completed": "yes" if asr_state == "completed" else "no",
                 "status": status,
                 "absrel_threshold": absrel_cutoff,
                 "meme_threshold": str(a.meme_p),

@@ -32,6 +32,7 @@ CLIPKIT_MODE_CHOICES = (
     "relaxed",
 )
 HYPHY_BRANCH_CHOICES = ("Leaves", "Internal", "All")
+RUN_ASR_CHOICES = ("yes", "no")
 ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
     "1": ("babappalign",),
     "2": ("mafft",),
@@ -50,6 +51,8 @@ GARD_MODE_CHOICES = ("Normal", "Faster")
 FORCED_TRIM_STRATEGY = "both"
 FORCED_TRIM_STATES = ["raw", "clipkit"]
 DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
+RESUME_STATE_DIRNAME = ".babappasnake"
+RESUME_STATE_FILENAME = "resume_state.json"
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,75 @@ class StepSpec:
     rule: str
     description: str
     outputs: tuple[str, ...]
+
+
+def option_was_provided(raw_args: list[str], option: str) -> bool:
+    return any(token == option or token.startswith(f"{option}=") for token in raw_args)
+
+
+def resume_state_path(outdir: Path) -> Path:
+    return outdir / RESUME_STATE_DIRNAME / RESUME_STATE_FILENAME
+
+
+def load_resume_state(outdir: Path) -> dict[str, object]:
+    path = resume_state_path(outdir)
+    if not path.exists() or path.stat().st_size == 0:
+        return {"completed_steps": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"completed_steps": {}}
+    if not isinstance(payload, dict):
+        return {"completed_steps": {}}
+    completed = payload.get("completed_steps")
+    if not isinstance(completed, dict):
+        payload["completed_steps"] = {}
+    return payload
+
+
+def save_resume_state(outdir: Path, payload: dict[str, object]) -> None:
+    path = resume_state_path(outdir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def initialize_resume_state(outdir: Path, config_path: Path, guided_mode: bool) -> None:
+    payload = load_resume_state(outdir)
+    payload["config_path"] = str(config_path.resolve())
+    payload["guided_mode"] = bool(guided_mode)
+    payload.setdefault("completed_steps", {})
+    save_resume_state(outdir, payload)
+
+
+def mark_step_completed(outdir: Path, step: StepSpec, status: str) -> None:
+    payload = load_resume_state(outdir)
+    completed = payload.setdefault("completed_steps", {})
+    if not isinstance(completed, dict):
+        completed = {}
+        payload["completed_steps"] = completed
+    completed[step.rule] = {
+        "status": status,
+        "outputs": list(step.outputs),
+    }
+    payload["last_completed_step"] = step.rule
+    save_resume_state(outdir, payload)
+
+
+def step_is_recorded_complete(outdir: Path, step: StepSpec) -> bool:
+    payload = load_resume_state(outdir)
+    completed = payload.get("completed_steps", {})
+    return isinstance(completed, dict) and step.rule in completed
+
+
+def bootstrap_completed_steps_from_outputs(outdir: Path, steps: list[StepSpec]) -> int:
+    detected = 0
+    for step in steps:
+        if step_is_recorded_complete(outdir, step):
+            continue
+        if step.outputs and all((outdir / rel).exists() for rel in step.outputs):
+            mark_step_completed(outdir, step, status="detected_existing_outputs")
+            detected += 1
+    return detected
 
 
 def is_tty_interactive() -> bool:
@@ -431,6 +503,8 @@ def validate_recombination_tools(mode: str, resolved_tools: dict[str, str]) -> N
 
 
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
+    if getattr(args, "resume", False):
+        return args
     if args.interactive == "no":
         return args
     if not is_tty_interactive():
@@ -480,6 +554,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
         str(args.meme_branches),
     )
     args.codeml_codonfreq = prompt_codonfreq(int(args.codeml_codonfreq))
+    args.run_asr = "yes" if prompt_yes_no("Run ASR extraction block after branch-site analysis?", args.run_asr == "yes") else "no"
     args.absrel_p = prompt_float("aBSREL compatibility threshold (--absrel-p)", float(args.absrel_p))
     args.absrel_dynamic_start = prompt_float(
         "Dynamic aBSREL start p (--absrel-dynamic-start)",
@@ -526,6 +601,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- absrel_branches: {args.absrel_branches}")
     print(f"- meme_branches: {args.meme_branches}")
     print(f"- codeml_codonfreq: {args.codeml_codonfreq}")
+    print(f"- run_asr: {args.run_asr}")
     print("- cds: prompted after orthogroup definition")
     print("- outgroup: prompted after CDS step (optional)")
     print(f"- guided: {args.guided}")
@@ -573,6 +649,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--absrel-branches", default="Leaves", help="HyPhy aBSREL branches selector [default: Leaves]")
     p.add_argument("--meme-branches", default="Leaves", help="HyPhy MEME branches selector [default: Leaves]")
     p.add_argument("--codeml-codonfreq", type=int, default=7, help="codeml CodonFreq value [default: 7]")
+    p.add_argument("--run-asr", choices=list(RUN_ASR_CHOICES), default="yes", help="Run the ASR extraction block after branch-site analysis [default: yes]")
     p.add_argument(
         "--recombination",
         choices=list(RECOMBINATION_CHOICES),
@@ -616,7 +693,182 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--snake-args", default="", help="Extra raw arguments forwarded to snakemake")
     p.add_argument("--interactive", choices=["yes", "no"], default="yes", help="Prompt for pipeline settings interactively [default: yes]")
     p.add_argument("--guided", choices=["yes", "no"], default="yes", help="Run step-by-step guided execution [default: yes]")
+    p.add_argument("--resume", action="store_true", help="Resume an existing run from the saved outdir/config.yaml")
     return p.parse_args()
+
+
+def load_config_file(config_path: Path) -> dict[str, object]:
+    with open(config_path, "r", encoding="utf-8") as fh:
+        payload = yaml.safe_load(fh) or {}
+    if not isinstance(payload, dict):
+        raise SystemExit(f"Invalid config structure in {config_path}")
+    return payload
+
+
+def save_config_file(config_path: Path, payload: dict[str, object]) -> None:
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(payload, fh, sort_keys=False)
+
+
+def bool_to_yes_no(value: object) -> str:
+    return "yes" if bool(value) else "no"
+
+
+def alignment_option_from_methods(methods: object) -> str:
+    if isinstance(methods, str):
+        normalized = tuple(token.strip().lower() for token in methods.split(",") if token.strip())
+    elif isinstance(methods, (list, tuple)):
+        normalized = tuple(str(token).strip().lower() for token in methods if str(token).strip())
+    else:
+        normalized = ()
+    for option, mapped in ALIGNMENT_METHOD_OPTION_MAP.items():
+        if tuple(mapped) == normalized:
+            return option
+    raise SystemExit(
+        "Saved run config contains unsupported alignment methods: "
+        + ", ".join(normalized or ("(none)",))
+    )
+
+
+def validate_resume_request(args: argparse.Namespace, raw_args: list[str]) -> Path:
+    forbidden = (
+        "--prot",
+        "--query",
+        "--orthogroup-method",
+        "--alignment-methods",
+        "--coverage",
+        "--iqtree-bootstrap",
+        "--iqtree-bnni",
+        "--iqtree-model",
+        "--absrel-branches",
+        "--meme-branches",
+        "--codeml-codonfreq",
+        "--run-asr",
+        "--recombination",
+        "--gard-mode",
+        "--gard-rate-classes",
+        "--trim-strategy",
+        "--clipkit-mode-protein",
+        "--clipkit-mode-codon",
+        "--absrel-p",
+        "--absrel-dynamic-start",
+        "--absrel-dynamic-step",
+        "--absrel-dynamic-max",
+        "--meme-p",
+        "--use-clipkit",
+    )
+    provided = [opt for opt in forbidden if option_was_provided(raw_args, opt)]
+    if provided:
+        raise SystemExit(
+            "When using --resume, analysis settings are loaded from the saved config. "
+            "Do not pass: " + ", ".join(provided)
+        )
+    if args.cds:
+        cds_path = Path(args.cds).expanduser()
+        if not cds_path.is_file():
+            raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
+    outdir = Path(args.outdir)
+    config_path = outdir / "config.yaml"
+    if not config_path.is_file():
+        raise SystemExit(
+            f"Cannot resume because no saved config was found at: {config_path}"
+        )
+    return config_path
+
+
+def hydrate_args_from_saved_config(
+    args: argparse.Namespace,
+    config: dict[str, object],
+    raw_args: list[str],
+) -> argparse.Namespace:
+    args.orthogroup_method = str(config.get("orthogroup_method", "rbh")).strip().lower() or "rbh"
+    args.alignment_methods = str(
+        config.get("alignment_method_option", alignment_option_from_methods(config.get("alignment_methods", [])))
+    )
+    args.coverage = float(config.get("coverage", args.coverage))
+    if not option_was_provided(raw_args, "--threads"):
+        args.threads = int(config.get("threads", args.threads))
+    args.iqtree_bootstrap = int(config.get("iqtree_bootstrap", args.iqtree_bootstrap))
+    args.iqtree_bnni = bool_to_yes_no(config.get("iqtree_bnni", False))
+    args.iqtree_model = str(config.get("iqtree_model", args.iqtree_model)).strip() or "MFP"
+    args.absrel_branches = str(config.get("absrel_branches", args.absrel_branches)).strip() or "Leaves"
+    args.meme_branches = str(config.get("meme_branches", args.meme_branches)).strip() or "Leaves"
+    args.codeml_codonfreq = int(config.get("codeml_codonfreq", args.codeml_codonfreq))
+    args.run_asr = bool_to_yes_no(config.get("run_asr", True))
+    args.recombination = parse_recombination_mode(config.get("recombination", args.recombination))
+    args.gard_mode = str(config.get("gard_mode", args.gard_mode)).strip() or "Faster"
+    args.gard_rate_classes = int(config.get("gard_rate_classes", args.gard_rate_classes))
+    args.trim_strategy = str(config.get("trim_strategy", args.trim_strategy or FORCED_TRIM_STRATEGY)).strip().lower()
+    args.use_clipkit = bool_to_yes_no(config.get("use_clipkit", True))
+    args.clipkit_mode_protein = str(config.get("clipkit_mode_protein", args.clipkit_mode_protein)).strip() or "kpic-smart-gap"
+    args.clipkit_mode_codon = str(config.get("clipkit_mode_codon", args.clipkit_mode_codon)).strip() or "kpic-smart-gap"
+    args.absrel_p = float(config.get("absrel_p", args.absrel_p))
+    args.absrel_dynamic_start = float(config.get("absrel_dynamic_start", args.absrel_dynamic_start))
+    args.absrel_dynamic_step = float(config.get("absrel_dynamic_step", args.absrel_dynamic_step))
+    args.absrel_dynamic_max = float(config.get("absrel_dynamic_max", args.absrel_dynamic_max))
+    args.meme_p = float(config.get("meme_p", args.meme_p))
+    if not option_was_provided(raw_args, "--outgroup"):
+        args.outgroup = str(config.get("outgroup_query", args.outgroup)).strip()
+    if not option_was_provided(raw_args, "--guided"):
+        args.guided = bool_to_yes_no(config.get("guided_mode", args.guided == "yes"))
+    if not option_was_provided(raw_args, "--snake-args"):
+        args.snake_args = str(config.get("snake_args", args.snake_args or "")).strip()
+    args.interactive = "no"
+    return args
+
+
+def stage_resume_overrides(
+    args: argparse.Namespace,
+    outdir: Path,
+    config_path: Path,
+    raw_args: list[str],
+) -> None:
+    config = load_config_file(config_path)
+    changed = False
+    if args.cds:
+        cds_dst_dir = outdir / "user_supplied"
+        cds_dst_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(args.cds).expanduser(), cds_dst_dir / "orthogroup_cds.fasta")
+    if option_was_provided(raw_args, "--outgroup"):
+        config["outgroup_query"] = str(args.outgroup).strip()
+        changed = True
+    if option_was_provided(raw_args, "--threads"):
+        config["threads"] = int(args.threads)
+        changed = True
+    if option_was_provided(raw_args, "--guided"):
+        config["guided_mode"] = args.guided == "yes"
+        changed = True
+    if option_was_provided(raw_args, "--snake-args"):
+        config["snake_args"] = str(args.snake_args).strip()
+        changed = True
+    methods = config.get("alignment_methods", [])
+    trim_states = config.get("trim_states", [])
+    try:
+        method_count = max(1, len(methods) if isinstance(methods, list) else len(parse_alignment_method_option(str(args.alignment_methods))))
+    except Exception:
+        method_count = max(1, len(parse_alignment_method_option(str(args.alignment_methods))))
+    if isinstance(trim_states, list) and trim_states:
+        pathway_count = max(1, method_count * len(trim_states))
+    else:
+        pathway_count = max(1, method_count * len(trim_states_from_strategy(args.trim_strategy)))
+    config["per_method_cores"] = compute_per_method_cores(int(args.threads), method_count)
+    config["per_pathway_cores"] = compute_per_pathway_cores(int(args.threads), pathway_count)
+    changed = True
+    if changed:
+        save_config_file(config_path, config)
+
+
+def prepare_resume_run(
+    args: argparse.Namespace,
+    raw_args: list[str],
+) -> tuple[argparse.Namespace, Path, Path]:
+    config_path = validate_resume_request(args, raw_args)
+    outdir = Path(args.outdir)
+    config = load_config_file(config_path)
+    args = hydrate_args_from_saved_config(args, config, raw_args)
+    stage_resume_overrides(args, outdir, config_path, raw_args)
+    initialize_resume_state(outdir, config_path, args.guided == "yes")
+    return args, config_path, outdir
 
 
 def validate_inputs(args: argparse.Namespace) -> None:
@@ -682,6 +934,7 @@ def write_config(
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
         "orthogroup_method": str(args.orthogroup_method).strip().lower(),
         "alignment_methods": methods,
+        "alignment_method_option": str(args.alignment_methods).strip(),
         "trim_strategy": trim_strategy,
         "trim_states": trim_states,
         "per_method_cores": int(per_method_cores),
@@ -695,6 +948,7 @@ def write_config(
         "absrel_branches": str(args.absrel_branches).strip() or "Leaves",
         "meme_branches": str(args.meme_branches).strip() or "Leaves",
         "codeml_codonfreq": int(args.codeml_codonfreq),
+        "run_asr": args.run_asr == "yes",
         "recombination": effective_recombination_mode(args.recombination),
         "gard_mode": str(args.gard_mode).strip() or "Faster",
         "gard_rate_classes": int(args.gard_rate_classes),
@@ -706,6 +960,8 @@ def write_config(
         "absrel_dynamic_step": float(args.absrel_dynamic_step),
         "absrel_dynamic_max": float(args.absrel_dynamic_max),
         "meme_p": float(args.meme_p),
+        "guided_mode": args.guided == "yes",
+        "snake_args": str(args.snake_args).strip(),
         "executables": executables,
     }
     config_path = outdir / "config.yaml"
@@ -714,15 +970,24 @@ def write_config(
     return config_path
 
 
-def build_snakemake_cmd(config_path: Path, cores: int, target: str, snake_args: str, snakefile: Path) -> list[str]:
+def build_snakemake_cmd(
+    config_path: Path,
+    cores: int,
+    target: str,
+    snake_args: str,
+    snakefile: Path,
+    workdir: Path,
+) -> list[str]:
     cmd = [
         sys.executable,
         "-m",
         "snakemake",
+        "--directory",
+        str(workdir.resolve()),
         "--snakefile",
-        str(snakefile),
+        str(Path(str(snakefile)).resolve()),
         "--configfile",
-        str(config_path),
+        str(config_path.resolve()),
         "--cores",
         str(cores),
         "--printshellcmds",
@@ -737,8 +1002,32 @@ def build_snakemake_cmd(config_path: Path, cores: int, target: str, snake_args: 
     return cmd
 
 
-def run_snakemake_target(config_path: Path, cores: int, target: str, snake_args: str, snakefile: Path) -> int:
-    cmd = build_snakemake_cmd(config_path, cores, target, snake_args, snakefile)
+def unlock_snakemake_run(config_path: Path, snakefile: Path, workdir: Path) -> int:
+    cmd = [
+        sys.executable,
+        "-m",
+        "snakemake",
+        "--directory",
+        str(workdir.resolve()),
+        "--snakefile",
+        str(Path(str(snakefile)).resolve()),
+        "--configfile",
+        str(config_path.resolve()),
+        "--unlock",
+    ]
+    result = subprocess.run(cmd, check=False)
+    return result.returncode
+
+
+def run_snakemake_target(
+    config_path: Path,
+    cores: int,
+    target: str,
+    snake_args: str,
+    snakefile: Path,
+    workdir: Path,
+) -> int:
+    cmd = build_snakemake_cmd(config_path, cores, target, snake_args, snakefile, workdir)
     result = subprocess.run(cmd, check=False)
     return result.returncode
 
@@ -748,6 +1037,7 @@ def build_step_plan(
     methods: list[str],
     trim_states: list[str],
     recombination_mode: str,
+    run_asr: bool,
 ) -> list[StepSpec]:
     pathways = enumerate_pathways(methods, trim_states)
 
@@ -804,8 +1094,7 @@ def build_step_plan(
             )
         )
 
-    steps.extend(
-        [
+    later_steps: list[StepSpec] = [
             StepSpec(
                 "iqtree_ml_all_pathways",
                 "Infer ML phylogeny with IQ-TREE for all selected pathways.",
@@ -857,29 +1146,6 @@ def build_step_plan(
                 ),
             ),
             StepSpec(
-                "codeml_asr_all_pathways",
-                "Run codeml ancestral sequence reconstruction for all selected pathways.",
-                tuple(
-                    f"asr/{method}/{trim_state}/asr_done.json"
-                    for method in methods
-                    for trim_state in trim_states
-                ),
-            ),
-            StepSpec(
-                "extract_selected_branch_ancestors",
-                "Map selected branches to parent/child nodes and recover ancestral/descendant sequences with substitutions.",
-                (
-                    "asr/branch_to_nodes.tsv",
-                    "asr/ancestor_sequences_cds.fasta",
-                    "asr/ancestor_sequences_aa.fasta",
-                    "asr/descendant_sequences_cds.fasta",
-                    "asr/descendant_sequences_aa.fasta",
-                    "asr/branch_substitutions.tsv",
-                    "asr/selected_branch_asr_summary.tsv",
-                    "asr/asr_extraction_provenance.json",
-                ),
-            ),
-            StepSpec(
                 "final_summary_all_pathways",
                 "Write pathway-specific episodic selection summaries.",
                 tuple(
@@ -905,17 +1171,46 @@ def build_step_plan(
                 ("summary/episodic_selection_summary.txt",),
             ),
             StepSpec(
-                "asr_primary_alias",
-                "Write legacy top-level ASR completion alias.",
-                ("asr/asr_done.json",),
-            ),
-            StepSpec(
                 "write_run_provenance",
                 "Write machine-readable run provenance.",
                 ("summary/run_provenance.json",),
             ),
+    ]
+    if run_asr:
+        later_steps[6:6] = [
+            StepSpec(
+                "codeml_asr_all_pathways",
+                "Run codeml ancestral sequence reconstruction for all selected pathways.",
+                tuple(
+                    f"asr/{method}/{trim_state}/asr_done.json"
+                    for method in methods
+                    for trim_state in trim_states
+                ),
+            ),
+            StepSpec(
+                "extract_selected_branch_ancestors",
+                "Map selected branches to parent/child nodes and recover ancestral/descendant sequences with substitutions.",
+                (
+                    "asr/branch_to_nodes.tsv",
+                    "asr/ancestor_sequences_cds.fasta",
+                    "asr/ancestor_sequences_aa.fasta",
+                    "asr/descendant_sequences_cds.fasta",
+                    "asr/descendant_sequences_aa.fasta",
+                    "asr/branch_substitutions.tsv",
+                    "asr/selected_branch_asr_summary.tsv",
+                    "asr/asr_extraction_provenance.json",
+                ),
+            ),
         ]
-    )
+        later_steps.insert(
+            -1,
+            StepSpec(
+                "asr_primary_alias",
+                "Write legacy top-level ASR completion alias.",
+                ("asr/asr_done.json",),
+            ),
+        )
+    steps.extend(later_steps)
     return steps
 
 
@@ -973,10 +1268,15 @@ def run_guided_step(
         print(f"\nStep {index}/{total}: {step.rule}")
     print(step.description)
     existing = tuple((outdir / rel).exists() for rel in step.outputs)
-    if all(existing):
-        print("All expected outputs for this step already exist. Auto-skipping.")
+    if step_is_recorded_complete(outdir, step) and all(existing):
+        print("This step is already recorded complete. Auto-skipping.")
         print_step_outputs(outdir, step.outputs)
         return 0
+    if all(existing):
+        print(
+            "All expected outputs already exist, but this step is not yet recorded complete. "
+            "Choose 'run' to let Snakemake verify it, or skip manually."
+        )
     can_skip = all(existing) or force_can_skip
     if can_skip:
         if force_can_skip:
@@ -988,12 +1288,21 @@ def run_guided_step(
     if action == "skip":
         if on_skip is not None:
             on_skip()
+        mark_step_completed(outdir, step, status="skipped")
         print("Step skipped (existing outputs retained).")
         print_step_outputs(outdir, step.outputs)
         return 0
-    code = run_snakemake_target(config_path, cores, step.rule, snake_args, snakefile)
+    code = run_snakemake_target(
+        config_path,
+        cores,
+        step.rule,
+        snake_args,
+        snakefile,
+        outdir,
+    )
     if code != 0:
         return code
+    mark_step_completed(outdir, step, status="completed")
     print_step_outputs(outdir, step.outputs)
     return 0
 
@@ -1126,6 +1435,10 @@ def run_guided_pipeline(
         ),
     )
     print("Guided mode enabled.")
+    if getattr(args, "resume", False):
+        detected = bootstrap_completed_steps_from_outputs(outdir, [rbh_step])
+        if detected:
+            print(f"[INFO] Resume scan detected {detected} previously completed step(s) before guided restart.")
     code = run_guided_step(
         config_path=config_path,
         outdir=outdir,
@@ -1147,8 +1460,12 @@ def run_guided_pipeline(
         have_cds = prompt_for_cds_after_rbh(args, outdir)
         maybe_prompt_outgroup_after_cds(args, config_path, have_cds)
 
-    steps = build_step_plan(have_cds, methods, trim_states, args.recombination)
+    steps = build_step_plan(have_cds, methods, trim_states, args.recombination, args.run_asr == "yes")
     total_steps = 1 + len(steps)
+    if getattr(args, "resume", False):
+        detected = bootstrap_completed_steps_from_outputs(outdir, steps)
+        if detected:
+            print(f"[INFO] Resume scan detected {detected} additional completed step(s).")
     print(f"Planned remaining steps: {len(steps)}")
     for idx, step in enumerate(steps, start=1):
         allow_skip = False
@@ -1175,66 +1492,100 @@ def run_guided_pipeline(
 
 
 def main() -> None:
+    raw_args = sys.argv[1:]
     args = parse_args()
-    args = maybe_prompt_interactive(args)
-    validate_inputs(args)
-    args.recombination = parse_recombination_mode(args.recombination)
-    recombination_mode = effective_recombination_mode(args.recombination)
-    methods = parse_alignment_method_option(args.alignment_methods)
-    requested_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
-    effective_trim_strategy, trim_states = force_robustness_trim_strategy(requested_trim_strategy)
-    args.trim_strategy = effective_trim_strategy
-    args.use_clipkit = "yes"
-
-    method_count = max(1, len(methods))
-    pathway_count = max(1, len(methods) * len(trim_states))
-    if int(args.threads) < pathway_count:
-        required_cores = pathway_count
-        print(
-            f"[INFO] Increasing --threads from {args.threads} to {required_cores} "
-            "so each selected pathway can run in parallel."
-        )
-        args.threads = required_cores
-    per_method_cores = compute_per_method_cores(int(args.threads), method_count)
-    per_pathway_cores = compute_per_pathway_cores(int(args.threads), pathway_count)
-    print(
-        f"[INFO] Core distribution: total={args.threads}, selected_methods={method_count}, "
-        f"selected_trim_states={len(trim_states)}, pathways={pathway_count}, "
-        f"per_method={per_method_cores}, per_pathway={per_pathway_cores}."
-    )
-    print("[INFO] Selected pathways: " + ", ".join(enumerate_pathways(methods, trim_states)))
-    print(
-        f"[INFO] Recombination screening mode: {args.recombination} "
-        f"(effective: {recombination_mode})."
-    )
-    if recombination_mode == "gard":
-        print(
-            f"[INFO] GARD parameters: mode={args.gard_mode}, "
-            f"rate_classes={args.gard_rate_classes}."
-        )
-
-    resolved, missing = resolve_tools()
-    if missing:
-        print(format_missing_tools(missing), file=sys.stderr)
-        raise SystemExit(2)
-    validate_orthogroup_method_tools(args.orthogroup_method, resolved)
-    validate_recombination_tools(args.recombination, resolved)
-    validate_selected_alignment_tools(methods, trim_states, resolved)
-
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    stage_inputs(args, outdir)
-    config_path = write_config(
-        args=args,
-        outdir=outdir,
-        executables=resolved,
-        methods=methods,
-        trim_strategy=effective_trim_strategy,
-        trim_states=trim_states,
-        per_method_cores=per_method_cores,
-        per_pathway_cores=per_pathway_cores,
-    )
     snakefile = ir.files("babappasnake").joinpath("workflow", "Snakefile")
+
+    if args.resume:
+        args, config_path, outdir = prepare_resume_run(args, raw_args)
+        args.recombination = parse_recombination_mode(args.recombination)
+        methods = parse_alignment_method_option(args.alignment_methods)
+        effective_trim_strategy, trim_states = force_robustness_trim_strategy(
+            derive_trim_strategy(args.trim_strategy, args.use_clipkit)
+        )
+        args.trim_strategy = effective_trim_strategy
+        args.use_clipkit = "yes"
+        method_count = max(1, len(methods))
+        pathway_count = max(1, len(methods) * len(trim_states))
+        per_method_cores = compute_per_method_cores(int(args.threads), method_count)
+        per_pathway_cores = compute_per_pathway_cores(int(args.threads), pathway_count)
+        print(f"[INFO] Resuming existing run from: {outdir}")
+        print(
+            f"[INFO] Core distribution: total={args.threads}, selected_methods={method_count}, "
+            f"selected_trim_states={len(trim_states)}, pathways={pathway_count}, "
+            f"per_method={per_method_cores}, per_pathway={per_pathway_cores}."
+        )
+        print("[INFO] Selected pathways: " + ", ".join(enumerate_pathways(methods, trim_states)))
+        print(
+            f"[INFO] Recombination screening mode: {args.recombination} "
+            f"(effective: {effective_recombination_mode(args.recombination)})."
+        )
+        print(f"[INFO] ASR extraction block: {args.run_asr}.")
+        print("[INFO] Clearing any stale Snakemake lock for this run directory before resume.")
+        unlock_code = unlock_snakemake_run(config_path, snakefile, outdir)
+        if unlock_code != 0:
+            raise SystemExit(unlock_code)
+    else:
+        args = maybe_prompt_interactive(args)
+        validate_inputs(args)
+        args.recombination = parse_recombination_mode(args.recombination)
+        recombination_mode = effective_recombination_mode(args.recombination)
+        methods = parse_alignment_method_option(args.alignment_methods)
+        requested_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
+        effective_trim_strategy, trim_states = force_robustness_trim_strategy(requested_trim_strategy)
+        args.trim_strategy = effective_trim_strategy
+        args.use_clipkit = "yes"
+
+        method_count = max(1, len(methods))
+        pathway_count = max(1, len(methods) * len(trim_states))
+        if int(args.threads) < pathway_count:
+            required_cores = pathway_count
+            print(
+                f"[INFO] Increasing --threads from {args.threads} to {required_cores} "
+                "so each selected pathway can run in parallel."
+            )
+            args.threads = required_cores
+        per_method_cores = compute_per_method_cores(int(args.threads), method_count)
+        per_pathway_cores = compute_per_pathway_cores(int(args.threads), pathway_count)
+        print(
+            f"[INFO] Core distribution: total={args.threads}, selected_methods={method_count}, "
+            f"selected_trim_states={len(trim_states)}, pathways={pathway_count}, "
+            f"per_method={per_method_cores}, per_pathway={per_pathway_cores}."
+        )
+        print("[INFO] Selected pathways: " + ", ".join(enumerate_pathways(methods, trim_states)))
+        print(
+            f"[INFO] Recombination screening mode: {args.recombination} "
+            f"(effective: {recombination_mode})."
+        )
+        print(f"[INFO] ASR extraction block: {args.run_asr}.")
+        if recombination_mode == "gard":
+            print(
+                f"[INFO] GARD parameters: mode={args.gard_mode}, "
+                f"rate_classes={args.gard_rate_classes}."
+            )
+
+        resolved, missing = resolve_tools()
+        if missing:
+            print(format_missing_tools(missing), file=sys.stderr)
+            raise SystemExit(2)
+        validate_orthogroup_method_tools(args.orthogroup_method, resolved)
+        validate_recombination_tools(args.recombination, resolved)
+        validate_selected_alignment_tools(methods, trim_states, resolved)
+
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        stage_inputs(args, outdir)
+        config_path = write_config(
+            args=args,
+            outdir=outdir,
+            executables=resolved,
+            methods=methods,
+            trim_strategy=effective_trim_strategy,
+            trim_states=trim_states,
+            per_method_cores=per_method_cores,
+            per_pathway_cores=per_pathway_cores,
+        )
+        initialize_resume_state(outdir, config_path, args.guided == "yes")
 
     if args.guided == "yes" and is_tty_interactive():
         rc = run_guided_pipeline(
@@ -1253,6 +1604,7 @@ def main() -> None:
             target="all",
             snake_args=args.snake_args,
             snakefile=snakefile,
+            workdir=outdir,
         )
     raise SystemExit(rc)
 

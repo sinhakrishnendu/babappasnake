@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+
+def _config_bool(raw, default: bool = True) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
 
 OUTDIR = Path(config["outdir"])
 QUERY = config["query_fasta"]
@@ -25,6 +37,7 @@ IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
 CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
+RUN_ASR = _config_bool(config.get("run_asr", True), True)
 RECOMBINATION_MODE = str(config.get("recombination", "none")).strip().lower()
 if RECOMBINATION_MODE == "auto":
     RECOMBINATION_MODE = "gard"
@@ -182,6 +195,24 @@ def pathway_gard_summary(wildcards):
     return OUTDIR / "recombination" / wildcards.method / wildcards.trim_state / "gard" / "gard_summary.json"
 
 
+def write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def write_tsv_file(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, delimiter="\t", fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_empty_fasta(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+
 if HAVE_CDS:
     rule all:
         input:
@@ -206,20 +237,26 @@ if HAVE_CDS:
                 if RUN_GARD
                 else []
             ),
-            OUTDIR / "asr" / "branch_to_nodes.tsv",
-            OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
-            OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
-            OUTDIR / "asr" / "descendant_sequences_cds.fasta",
-            OUTDIR / "asr" / "descendant_sequences_aa.fasta",
-            OUTDIR / "asr" / "branch_substitutions.tsv",
-            OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
-            OUTDIR / "asr" / "asr_extraction_provenance.json",
             expand(
                 OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
                 method=ALIGNMENT_METHODS,
                 trim_state=TRIM_STATES,
             ),
-            OUTDIR / "asr" / "asr_done.json"
+            (
+                [
+                    OUTDIR / "asr" / "branch_to_nodes.tsv",
+                    OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
+                    OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
+                    OUTDIR / "asr" / "descendant_sequences_cds.fasta",
+                    OUTDIR / "asr" / "descendant_sequences_aa.fasta",
+                    OUTDIR / "asr" / "branch_substitutions.tsv",
+                    OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+                    OUTDIR / "asr" / "asr_extraction_provenance.json",
+                    OUTDIR / "asr" / "asr_done.json",
+                ]
+                if RUN_ASR
+                else []
+            )
 else:
     rule all:
         input:
@@ -584,33 +621,54 @@ if HAVE_CDS:
             rules.root_iqtree_outgroup_all_pathways.input
 
 
-    rule codeml_asr_pathway:
-        input:
-            aln=pathway_cds_alignment,
-            tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
-        output:
-            done=OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
-            mlc=OUTDIR / "asr" / "{method}" / "{trim_state}" / "mlc_asr.txt",
-            rst=OUTDIR / "asr" / "{method}" / "{trim_state}" / "rst",
-        wildcard_constraints:
-            method=METHOD_PATTERN,
-            trim_state=TRIM_PATTERN
-        log:
-            OUTDIR / "logs" / "{method}" / "{trim_state}" / "codeml_asr.log"
-        shell:
-            r'''
-            mkdir -p {OUTDIR}/asr/{wildcards.method}/{wildcards.trim_state}
-            mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
-            python -m babappasnake.scripts.run_codeml_asr \
-              --alignment {input.aln} \
-              --tree {input.tree} \
-              --outdir {OUTDIR}/asr/{wildcards.method}/{wildcards.trim_state} \
-              --codeml "{CODEML}" \
-              --codonfreq {CODEML_CODONFREQ} > {log} 2>&1
-            test -f {output.done}
-            test -f {output.mlc}
-            test -f {output.rst}
-            '''
+    if RUN_ASR:
+        rule codeml_asr_pathway:
+            input:
+                aln=pathway_cds_alignment,
+                tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
+            output:
+                done=OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
+                mlc=OUTDIR / "asr" / "{method}" / "{trim_state}" / "mlc_asr.txt",
+                rst=OUTDIR / "asr" / "{method}" / "{trim_state}" / "rst",
+            wildcard_constraints:
+                method=METHOD_PATTERN,
+                trim_state=TRIM_PATTERN
+            log:
+                OUTDIR / "logs" / "{method}" / "{trim_state}" / "codeml_asr.log"
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/asr/{wildcards.method}/{wildcards.trim_state}
+                mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
+                python -m babappasnake.scripts.run_codeml_asr \
+                  --alignment {input.aln} \
+                  --tree {input.tree} \
+                  --outdir {OUTDIR}/asr/{wildcards.method}/{wildcards.trim_state} \
+                  --codeml "{CODEML}" \
+                  --codonfreq {CODEML_CODONFREQ} > {log} 2>&1
+                test -f {output.done}
+                test -f {output.mlc}
+                test -f {output.rst}
+                '''
+    else:
+        rule codeml_asr_pathway:
+            input:
+                aln=pathway_cds_alignment,
+                tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
+            output:
+                done=OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
+            wildcard_constraints:
+                method=METHOD_PATTERN,
+                trim_state=TRIM_PATTERN
+            run:
+                write_json_file(
+                    Path(str(output.done)),
+                    {
+                        "status": "skipped",
+                        "reason": "asr_disabled",
+                        "method": wildcards.method,
+                        "trim_state": wildcards.trim_state,
+                    },
+                )
 
 
     rule codeml_asr_all_pathways:
@@ -627,48 +685,170 @@ if HAVE_CDS:
             rules.codeml_asr_all_pathways.input
 
 
-    rule extract_selected_branch_ancestors:
-        input:
-            branchsite=expand(
-                OUTDIR / "branchsite" / "{method}" / "{trim_state}" / "branchsite_results.tsv",
-                method=ALIGNMENT_METHODS,
-                trim_state=TRIM_STATES,
-            ),
-            trees=expand(
-                OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
-                method=ALIGNMENT_METHODS,
-                trim_state=TRIM_STATES,
-            ),
-            alignments=expand(
-                OUTDIR / "alignments" / "{method}" / "{trim_state}" / "mapped_orthogroup_cds.analysis.fasta",
-                method=ALIGNMENT_METHODS,
-                trim_state=TRIM_STATES,
-            ),
-        output:
-            branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
-            anc_cds=OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
-            anc_aa=OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
-            desc_cds=OUTDIR / "asr" / "descendant_sequences_cds.fasta",
-            desc_aa=OUTDIR / "asr" / "descendant_sequences_aa.fasta",
-            substitutions=OUTDIR / "asr" / "branch_substitutions.tsv",
-            summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
-            provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
-        params:
-            pathways=",".join(PATHWAY_LABELS),
-            meme_p=MEME_P,
-        log:
-            OUTDIR / "logs" / "extract_selected_branch_ancestors.log"
-        shell:
-            r'''
-            mkdir -p {OUTDIR}/asr
-            mkdir -p {OUTDIR}/logs
-            python -m babappasnake.scripts.extract_selected_branch_ancestors \
-              --outdir {OUTDIR:q} \
-              --pathways {params.pathways:q} \
-              --codeml {CODEML:q} \
-              --codonfreq {CODEML_CODONFREQ} \
-              --meme-p {params.meme_p} > {log} 2>&1
-            '''
+    if RUN_ASR:
+        rule extract_selected_branch_ancestors:
+            input:
+                branchsite=expand(
+                    OUTDIR / "branchsite" / "{method}" / "{trim_state}" / "branchsite_results.tsv",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+                trees=expand(
+                    OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+                alignments=expand(
+                    OUTDIR / "alignments" / "{method}" / "{trim_state}" / "mapped_orthogroup_cds.analysis.fasta",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+            output:
+                branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
+                anc_cds=OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
+                anc_aa=OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
+                desc_cds=OUTDIR / "asr" / "descendant_sequences_cds.fasta",
+                desc_aa=OUTDIR / "asr" / "descendant_sequences_aa.fasta",
+                substitutions=OUTDIR / "asr" / "branch_substitutions.tsv",
+                summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+                provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
+            params:
+                pathways=",".join(PATHWAY_LABELS),
+                meme_p=MEME_P,
+            log:
+                OUTDIR / "logs" / "extract_selected_branch_ancestors.log"
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/asr
+                mkdir -p {OUTDIR}/logs
+                python -m babappasnake.scripts.extract_selected_branch_ancestors \
+                  --outdir {OUTDIR:q} \
+                  --pathways {params.pathways:q} \
+                  --codeml {CODEML:q} \
+                  --codonfreq {CODEML_CODONFREQ} \
+                  --meme-p {params.meme_p} > {log} 2>&1
+                '''
+    else:
+        rule extract_selected_branch_ancestors:
+            input:
+                branchsite=expand(
+                    OUTDIR / "branchsite" / "{method}" / "{trim_state}" / "branchsite_results.tsv",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+                trees=expand(
+                    OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.rooted.treefile",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+                alignments=expand(
+                    OUTDIR / "alignments" / "{method}" / "{trim_state}" / "mapped_orthogroup_cds.analysis.fasta",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                ),
+            output:
+                branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
+                anc_cds=OUTDIR / "asr" / "ancestor_sequences_cds.fasta",
+                anc_aa=OUTDIR / "asr" / "ancestor_sequences_aa.fasta",
+                desc_cds=OUTDIR / "asr" / "descendant_sequences_cds.fasta",
+                desc_aa=OUTDIR / "asr" / "descendant_sequences_aa.fasta",
+                substitutions=OUTDIR / "asr" / "branch_substitutions.tsv",
+                summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
+                provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
+            params:
+                pathways=",".join(PATHWAY_LABELS)
+            run:
+                summary_rows = [
+                    {
+                        "gene": "orthogroup",
+                        "pathway": f"{method}_{trim_state}",
+                        "method": method,
+                        "trim_state": trim_state,
+                        "selected_branch": "NA",
+                        "n_codon_changes": "0",
+                        "n_nonsyn_changes": "0",
+                        "n_syn_changes": "0",
+                        "n_beb_overlap_changes": "0",
+                        "n_meme_overlap_changes": "0",
+                        "ancestral_sequence_recovered": "no",
+                        "status": "skipped_asr_disabled",
+                        "notes": "ASR block disabled by configuration.",
+                    }
+                    for method in ALIGNMENT_METHODS
+                    for trim_state in TRIM_STATES
+                ]
+                write_tsv_file(
+                    Path(str(output.branch_nodes)),
+                    [
+                        "gene",
+                        "pathway",
+                        "method",
+                        "trim_state",
+                        "foreground_label_raw",
+                        "foreground_label_canonical",
+                        "parent_node_id",
+                        "child_node_id",
+                        "child_node_name",
+                        "child_node_type",
+                        "status",
+                        "notes",
+                    ],
+                    [],
+                )
+                write_tsv_file(
+                    Path(str(output.substitutions)),
+                    [
+                        "gene",
+                        "pathway",
+                        "method",
+                        "trim_state",
+                        "foreground_label_canonical",
+                        "parent_node_id",
+                        "child_node_id",
+                        "codon_site",
+                        "parent_codon",
+                        "child_codon",
+                        "parent_aa",
+                        "child_aa",
+                        "change_type",
+                        "posterior_support_parent",
+                        "posterior_support_child",
+                        "overlaps_beb_site",
+                        "overlaps_meme_site",
+                    ],
+                    [],
+                )
+                write_tsv_file(
+                    Path(str(output.summary)),
+                    [
+                        "gene",
+                        "pathway",
+                        "method",
+                        "trim_state",
+                        "selected_branch",
+                        "n_codon_changes",
+                        "n_nonsyn_changes",
+                        "n_syn_changes",
+                        "n_beb_overlap_changes",
+                        "n_meme_overlap_changes",
+                        "ancestral_sequence_recovered",
+                        "status",
+                        "notes",
+                    ],
+                    summary_rows,
+                )
+                write_empty_fasta(Path(str(output.anc_cds)))
+                write_empty_fasta(Path(str(output.anc_aa)))
+                write_empty_fasta(Path(str(output.desc_cds)))
+                write_empty_fasta(Path(str(output.desc_aa)))
+                write_json_file(
+                    Path(str(output.provenance)),
+                    {
+                        "status": "skipped",
+                        "reason": "asr_disabled",
+                        "pathways": [f"{method}_{trim_state}" for method in ALIGNMENT_METHODS for trim_state in TRIM_STATES],
+                    },
+                )
 
 
     rule hyphy_exploratory_pathway:
@@ -1014,15 +1194,23 @@ if HAVE_CDS:
             comparative=OUTDIR / "summary" / "comparative_reproducibility_summary.txt",
             latex=OUTDIR / "summary" / "robustness_publication_table.tex",
             top_summary=OUTDIR / "summary" / "episodic_selection_summary.txt",
-            top_asr=OUTDIR / "asr" / "asr_done.json",
-            asr_branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv",
-            asr_summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv",
-            asr_provenance=OUTDIR / "asr" / "asr_extraction_provenance.json",
+            top_asr=OUTDIR / "asr" / "asr_done.json" if RUN_ASR else [],
+            asr_branch_nodes=OUTDIR / "asr" / "branch_to_nodes.tsv" if RUN_ASR else [],
+            asr_summary=OUTDIR / "asr" / "selected_branch_asr_summary.tsv" if RUN_ASR else [],
+            asr_provenance=OUTDIR / "asr" / "asr_extraction_provenance.json" if RUN_ASR else [],
         output:
             provenance=OUTDIR / "summary" / "run_provenance.json"
         run:
             provenance_path = Path(str(output.provenance))
             summary_dir = provenance_path.parent
+            def _optional_input_path(value) -> str:
+                if not value:
+                    return ""
+                if isinstance(value, (list, tuple)):
+                    if not value:
+                        return ""
+                    value = value[0]
+                return str(Path(str(value)))
             payload = {
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "outdir": str(OUTDIR.resolve()),
@@ -1047,6 +1235,7 @@ if HAVE_CDS:
                     "recombination": RECOMBINATION_MODE,
                     "gard_mode": GARD_MODE,
                     "gard_rate_classes": GARD_RATE_CLASSES,
+                    "run_asr": RUN_ASR,
                     "clipkit_mode_protein": CLIPKIT_MODE_PROTEIN,
                     "clipkit_mode_codon": CLIPKIT_MODE_CODON,
                     "threads_total": THREADS,
@@ -1060,11 +1249,11 @@ if HAVE_CDS:
                     "comparative_summary": str(summary_dir / "comparative_reproducibility_summary.txt"),
                     "publication_table_latex": str(summary_dir / "robustness_publication_table.tex"),
                     "top_level_summary": str(Path(str(input.top_summary))),
-                    "top_level_asr": str(Path(str(input.top_asr))),
+                    "top_level_asr": _optional_input_path(input.top_asr),
                     "recombination_dir": str((OUTDIR / "recombination")),
-                    "asr_branch_to_nodes": str(Path(str(input.asr_branch_nodes))),
-                    "asr_selected_branch_summary": str(Path(str(input.asr_summary))),
-                    "asr_extraction_provenance": str(Path(str(input.asr_provenance))),
+                    "asr_branch_to_nodes": _optional_input_path(input.asr_branch_nodes),
+                    "asr_selected_branch_summary": _optional_input_path(input.asr_summary),
+                    "asr_extraction_provenance": _optional_input_path(input.asr_provenance),
                 },
             }
             summary_dir.mkdir(parents=True, exist_ok=True)
