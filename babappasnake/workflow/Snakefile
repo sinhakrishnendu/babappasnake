@@ -557,10 +557,16 @@ if HAVE_CDS:
         shell:
             r'''
             mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
-            python -m babappasnake.scripts.root_tree_outgroup \
-              --tree {input.tree} \
-              --output {output.rooted} \
-              --outgroup {params.outgroup:q} > {log} 2>&1
+            if [ -n "{params.outgroup}" ]; then
+              python -m babappasnake.scripts.root_tree_outgroup \
+                --tree {input.tree} \
+                --output {output.rooted} \
+                --outgroup {params.outgroup:q} > {log} 2>&1
+            else
+              python -m babappasnake.scripts.root_tree_outgroup \
+                --tree {input.tree} \
+                --output {output.rooted} > {log} 2>&1
+            fi
             '''
 
 

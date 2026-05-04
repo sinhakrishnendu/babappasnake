@@ -182,3 +182,28 @@ def test_validate_orthogroup_method_tools_rbh_fallback_requires_orthofinder():
             "orthofinder": "/usr/bin/orthofinder",
         },
     )
+
+
+def test_maybe_prompt_outgroup_after_cds_skips_prompt_when_cds_missing(tmp_path, monkeypatch):
+    args = Namespace(outgroup="")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("outgroup_query: \"\"\n", encoding="utf-8")
+
+    prompt_calls: list[str] = []
+    config_updates: list[str] = []
+
+    def fake_prompt(*args, **kwargs):
+        prompt_calls.append("called")
+        return "should_not_happen"
+
+    def fake_set(config_path_arg, outgroup_arg):
+        config_updates.append(str(outgroup_arg))
+
+    monkeypatch.setattr(cli, "prompt_text", fake_prompt)
+    monkeypatch.setattr(cli, "set_outgroup_in_config", fake_set)
+
+    cli.maybe_prompt_outgroup_after_cds(args, config_path, have_cds=False)
+
+    assert prompt_calls == []
+    assert config_updates == []
+    assert args.outgroup == ""

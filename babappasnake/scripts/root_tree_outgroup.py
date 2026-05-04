@@ -83,7 +83,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--tree", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--outgroup", default="")
+    p.add_argument("--outgroup", nargs="?", const="", default="")
     a = p.parse_args()
 
     input_tree = Path(a.tree)

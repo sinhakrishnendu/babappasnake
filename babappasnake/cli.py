@@ -1057,6 +1057,28 @@ def prompt_for_cds_after_rbh(args: argparse.Namespace, outdir: Path) -> bool:
         return True
 
 
+def maybe_prompt_outgroup_after_cds(
+    args: argparse.Namespace,
+    config_path: Path,
+    have_cds: bool,
+) -> None:
+    if not have_cds:
+        print("No CDS staged yet; deferring outgroup prompt until downstream tree stages are reachable.")
+        return
+
+    outgroup_prompt = prompt_text(
+        "Optional outgroup query for rooting (press Enter to skip)",
+        str(args.outgroup or ""),
+        required=False,
+    ).strip()
+    args.outgroup = outgroup_prompt
+    set_outgroup_in_config(config_path, args.outgroup)
+    if args.outgroup:
+        print(f"Using outgroup query: {args.outgroup}")
+    else:
+        print("No outgroup query provided; tree will be left unrooted for downstream use.")
+
+
 def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
     with open(config_path, "r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
@@ -1123,17 +1145,7 @@ def run_guided_pipeline(
     have_cds = staged_cds.exists() and staged_cds.stat().st_size > 0
     if is_tty_interactive():
         have_cds = prompt_for_cds_after_rbh(args, outdir)
-        outgroup_prompt = prompt_text(
-            "Optional outgroup query for rooting (press Enter to skip)",
-            str(args.outgroup or ""),
-            required=False,
-        ).strip()
-        args.outgroup = outgroup_prompt
-        set_outgroup_in_config(config_path, args.outgroup)
-        if args.outgroup:
-            print(f"Using outgroup query: {args.outgroup}")
-        else:
-            print("No outgroup query provided; tree will be left unrooted for downstream use.")
+        maybe_prompt_outgroup_after_cds(args, config_path, have_cds)
 
     steps = build_step_plan(have_cds, methods, trim_states, args.recombination)
     total_steps = 1 + len(steps)
