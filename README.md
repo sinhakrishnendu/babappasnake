@@ -69,10 +69,9 @@ Always needed for a complete end-to-end run:
 - `codeml` from `paml`
 - `clipkit`
 
-Needed only for selected orthogroup modes:
+Needed for orthogroup inference:
 
 - `orthofinder` for `--orthogroup-method orthofinder`
-- `orthofinder` for `--orthogroup-method rbh_fallback`
 
 Needed only for selected alignment methods:
 
@@ -129,40 +128,16 @@ Behavior:
 
 ## Orthogroup Discovery Modes
 
-### Default: `--orthogroup-method rbh`
+### Default: `--orthogroup-method orthofinder`
 
-RBH-only mode.
-
-Behavior:
-
-1. Run reciprocal best-hit ortholog recovery.
-2. Retain strict one-to-one orthologs only.
-3. Stop with an explicit error if no usable strict one-to-one orthogroup is recovered.
-
-This is the default and recommended starting mode.
-
-### Direct OrthoFinder: `--orthogroup-method orthofinder`
-
-OrthoFinder-only mode.
+OrthoFinder is the only orthogroup backend used by the workflow.
 
 Behavior:
 
 1. Run OrthoFinder.
 2. BLAST the query against OrthoFinder orthogroup-member proteins.
 3. Rank orthogroups by query support.
-4. Retain strict one-to-one orthologs only.
-
-### Comparison fallback: `--orthogroup-method rbh_fallback`
-
-This preserves the older compare-and-choose behavior.
-
-Behavior:
-
-1. Run RBH.
-2. Run OrthoFinder.
-3. Compute strict one-to-one support for both results.
-4. Keep the result with the stronger strict one-to-one count.
-5. If tied, keep RBH deterministically.
+4. Extract members from the best supported orthogroup using `--orthology-mode`.
 
 ### OrthoFinder query mapping details
 
@@ -173,11 +148,13 @@ The workflow does not assume that the original query ID is directly present insi
 3. BLAST the query against that combined FASTA.
 4. Filter by query coverage threshold.
 5. Rank orthogroups by cross-species support and bitscore.
-6. Extract the top supported orthogroup and apply strict one-to-one filtering.
+6. Extract the top supported orthogroup and apply the configured orthology/paralogy mode.
 
-### Strict one-to-one rule
+### Orthology and paralogy modes
 
-A species contributes to the final orthogroup only when exactly one ortholog is retained for that species. This prevents duplicate same-species entries in downstream alignments and trees.
+- `--orthology-mode representative` is the default. Single-copy species are retained directly; multi-copy species contribute the best query-supported copy.
+- `--orthology-mode strict` retains only species with exactly one member in the selected orthogroup.
+- `--orthology-mode paralog` retains all copies from each species in the selected orthogroup.
 
 ## Running The Pipeline
 
@@ -196,7 +173,8 @@ Behavior:
 
 Important defaults in guided mode:
 
-- Orthogroup method defaults to `rbh`.
+- Orthogroup method defaults to `orthofinder`.
+- Orthology mode defaults to `representative`.
 - Alignment methods default to `4` which means all three aligners.
 - Trimming is forced internally to robustness mode: `raw + clipkit`.
 - Recombination defaults to `none`.
@@ -219,30 +197,30 @@ babappasnake \
   --guided no
 ```
 
-### Example: RBH-only run with ASR disabled
+### Example: representative orthology mode with ASR disabled
 
 ```bash
 babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
-  --orthogroup-method rbh \
+  --orthology-mode representative \
   --run-asr no \
-  --outdir run_rbh_no_asr \
+  --outdir run_representative_no_asr \
   --threads 12 \
   --interactive no \
   --guided no
 ```
 
-### Example: OrthoFinder-only run
+### Example: retain all paralog copies
 
 ```bash
 babappasnake \
   --prot /path/to/proteomes \
   --query /path/to/query.fasta \
   --cds /path/to/orthogroup_cds.fasta \
-  --orthogroup-method orthofinder \
-  --outdir run_orthofinder \
+  --orthology-mode paralog \
+  --outdir run_paralog_mode \
   --threads 12 \
   --interactive no \
   --guided no
@@ -333,8 +311,8 @@ Analysis settings that define workflow structure are intentionally not changeabl
 
 ## Workflow Stages
 
-1. `rbh_orthogroup`
-   Build the selected orthogroup by the configured orthogroup backend.
+1. `orthofinder_orthogroup`
+   Build the selected orthogroup with OrthoFinder and the configured orthology mode.
 2. `map_cds`
    Map CDS to selected proteins and filter low-quality CDS.
 3. `align_proteins_all_methods`
@@ -470,7 +448,7 @@ All outputs live inside `--outdir`.
 - `inputs/proteomes/`
 - `orthogroup/orthogroup_proteins.fasta`
 - `orthogroup/orthogroup_headers.txt`
-- `orthogroup/rbh_summary.tsv`
+- `orthogroup/orthogroup_summary.tsv`
 - `orthogroup/WAITING_FOR_CDS.txt`
 - `user_supplied/orthogroup_cds.fasta`
 - `mapped_cds/cds_protein_mapping.tsv`
@@ -557,7 +535,8 @@ babappasnake --resume --outdir RUN_DIR [resume overrides]
 
 ### Orthogroup and alignment options
 
-- `--orthogroup-method {rbh,orthofinder,rbh_fallback}`
+- `--orthogroup-method {orthofinder}`
+- `--orthology-mode {strict,representative,paralog}`
 - `--coverage FLOAT`
 - `--alignment-methods {1,2,3,4}`
 - `--trim-strategy {raw,clipkit,both}`
@@ -619,9 +598,9 @@ babappasnake --resume --outdir OUTDIR
 
 The workflow will reload saved settings, clear stale lock state, and continue incomplete work.
 
-### OrthoFinder or RBH finds no usable orthogroup
+### OrthoFinder finds no usable orthogroup
 
-The pipeline stops explicitly when strict one-to-one recovery fails.
+The pipeline stops explicitly when the selected orthogroup and orthology mode retain no partner sequences.
 
 Check:
 

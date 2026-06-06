@@ -57,7 +57,8 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     args = Namespace(
         coverage=0.7,
         threads=12,
-        orthogroup_method="rbh",
+        orthogroup_method="orthofinder",
+        orthology_mode="representative",
         alignment_methods="4",
         run_asr="yes",
         outgroup="culex",
@@ -99,7 +100,8 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
     )
 
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    assert cfg["orthogroup_method"] == "rbh"
+    assert cfg["orthogroup_method"] == "orthofinder"
+    assert cfg["orthology_mode"] == "representative"
     assert cfg["trim_strategy"] == "both"
     assert cfg["trim_states"] == ["raw", "clipkit"]
     assert cfg["use_clipkit"] is True
@@ -165,7 +167,8 @@ def test_write_config_records_run_asr_flag(tmp_path):
     args = Namespace(
         coverage=0.7,
         threads=12,
-        orthogroup_method="rbh",
+        orthogroup_method="orthofinder",
+        orthology_mode="paralog",
         alignment_methods="1",
         run_asr="no",
         outgroup="culex",
@@ -206,6 +209,7 @@ def test_write_config_records_run_asr_flag(tmp_path):
     )
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     assert cfg["run_asr"] is False
+    assert cfg["orthology_mode"] == "paralog"
 
 
 def test_build_snakemake_cmd_scopes_execution_to_run_directory(tmp_path):
@@ -235,7 +239,8 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
     config_path.write_text(
         yaml.safe_dump(
             {
-                "orthogroup_method": "rbh",
+                "orthogroup_method": "orthofinder",
+                "orthology_mode": "representative",
                 "alignment_methods": ["babappalign"],
                 "alignment_method_option": "1",
                 "trim_strategy": "both",
@@ -275,7 +280,8 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
         prot=None,
         query=None,
         cds=str(cds_path),
-        orthogroup_method="rbh",
+        orthogroup_method="orthofinder",
+        orthology_mode="representative",
         outdir=str(outdir),
         alignment_methods="4",
         coverage=0.7,
@@ -328,6 +334,8 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
     assert prepared_config == config_path
     assert prepared_outdir == outdir
     assert prepared.alignment_methods == "1"
+    assert prepared.orthogroup_method == "orthofinder"
+    assert prepared.orthology_mode == "representative"
     assert prepared.guided == "yes"
     assert prepared.snake_args == "--latency-wait 5"
     assert prepared.outgroup == "override_outgroup"
@@ -339,6 +347,8 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
     assert cfg["guided_mode"] is True
     assert cfg["snake_args"] == "--latency-wait 5"
     assert cfg["outgroup_query"] == "override_outgroup"
+    assert cfg["orthogroup_method"] == "orthofinder"
+    assert cfg["orthology_mode"] == "representative"
     assert cfg["per_method_cores"] == 16
     assert cfg["per_pathway_cores"] == 8
     state = cli.load_resume_state(outdir)
@@ -348,7 +358,10 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
 def test_validate_resume_request_rejects_analysis_overrides(tmp_path):
     outdir = tmp_path / "run"
     outdir.mkdir()
-    (outdir / "config.yaml").write_text("orthogroup_method: rbh\n", encoding="utf-8")
+    (outdir / "config.yaml").write_text(
+        "orthogroup_method: orthofinder\northology_mode: representative\n",
+        encoding="utf-8",
+    )
     args = Namespace(outdir=str(outdir), cds=None)
 
     with pytest.raises(SystemExit):
@@ -362,14 +375,15 @@ def test_validate_recombination_tools_requires_hyphy_for_gard():
         cli.validate_recombination_tools("gard", {})
 
 
-def test_validate_orthogroup_method_tools_rbh_requires_blast_tools():
-    cli.validate_orthogroup_method_tools(
-        "rbh",
-        {
-            "blastp": "/usr/bin/blastp",
-            "makeblastdb": "/usr/bin/makeblastdb",
-        },
-    )
+def test_validate_orthogroup_method_tools_rejects_removed_methods():
+    with pytest.raises(SystemExit, match="Supported: orthofinder"):
+        cli.validate_orthogroup_method_tools(
+            "legacy",
+            {
+                "blastp": "/usr/bin/blastp",
+                "makeblastdb": "/usr/bin/makeblastdb",
+            },
+        )
 
 
 def test_validate_orthogroup_method_tools_orthofinder_requires_binary():
@@ -383,24 +397,14 @@ def test_validate_orthogroup_method_tools_orthofinder_requires_binary():
     )
 
 
-def test_validate_orthogroup_method_tools_rbh_fallback_requires_orthofinder():
-    with pytest.raises(SystemExit):
+def test_validate_orthogroup_method_tools_orthofinder_requires_mapping_tools():
+    with pytest.raises(SystemExit, match="requires tools on PATH"):
         cli.validate_orthogroup_method_tools(
-            "rbh_fallback",
+            "orthofinder",
             {
-                "blastp": "/usr/bin/blastp",
-                "makeblastdb": "/usr/bin/makeblastdb",
+                "orthofinder": "/usr/bin/orthofinder",
             },
         )
-
-    cli.validate_orthogroup_method_tools(
-        "rbh_fallback",
-        {
-            "blastp": "/usr/bin/blastp",
-            "makeblastdb": "/usr/bin/makeblastdb",
-            "orthofinder": "/usr/bin/orthofinder",
-        },
-    )
 
 
 def test_maybe_prompt_outgroup_after_cds_skips_prompt_when_cds_missing(tmp_path, monkeypatch):

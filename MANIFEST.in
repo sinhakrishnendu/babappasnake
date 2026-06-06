@@ -1,5 +1,10 @@
 recursive-include babappasnake/workflow *
 include LICENSE
+prune manuscript
+prune applicationnote
+prune figures
 prune babappasnake/__pycache__
 prune babappasnake/scripts/__pycache__
-global-exclude *.py[cod] .DS_Store
+global-exclude *.py[cod] .DS_Store ._* Thumbs.db
+global-exclude *.tex *.bib *.bbl *.aux *.bcf *.blg *.fdb_latexmk *.fls *.lof *.lot *.out *.run.xml *.synctex.gz *.toc
+global-exclude *.pdf *.doc *.docx *.odt *.rtf

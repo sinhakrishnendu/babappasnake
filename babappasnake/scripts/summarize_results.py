@@ -44,9 +44,18 @@ def count_meme_sites(meme_json_path: str, pcut: float) -> int:
     return content.count('"p"')
 
 
+def split_members(value: object) -> list[str]:
+    return [token.strip() for token in str(value or "").split(",") if token.strip()]
+
+
+def count_retained_orthogroup_members(rows: list[dict]) -> int:
+    retained_partners = sum(len(split_members(row.get("selected_members"))) for row in rows)
+    return retained_partners + 1
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--rbh", required=True)
+    p.add_argument("--orthogroup-summary", required=True)
     p.add_argument("--mapping", required=True)
     p.add_argument("--absrel", required=True)
     p.add_argument("--absrel-meta", required=False)
@@ -59,7 +68,7 @@ def main() -> None:
     p.add_argument("--meme-p", type=float, default=0.05)
     a = p.parse_args()
 
-    rbh = read_tsv(a.rbh)
+    orthogroup = read_tsv(a.orthogroup_summary)
     mapping = read_tsv(a.mapping)
     absrel = read_tsv(a.absrel)
     branchsite = read_tsv(a.branchsite)
@@ -80,7 +89,9 @@ def main() -> None:
     lines.append(header)
     lines.append("=" * 42)
     lines.append("")
-    lines.append(f"Orthogroup members recovered by RBH: {sum(1 for x in rbh if x.get('ortholog') not in {None, '', 'NA'}) + 1}")
+    lines.append(f"Orthogroup members retained by OrthoFinder: {count_retained_orthogroup_members(orthogroup)}")
+    if orthogroup:
+        lines.append(f"Orthology mode: {pick_value(orthogroup[0], ('orthology_mode',), default='NA')}")
     lines.append(f"CDS-to-protein mappings retained: {len(mapping)}")
     lines.append("")
     lines.append("Exploratory HyPhy stage")
@@ -110,7 +121,7 @@ def main() -> None:
     lines.append("")
     lines.append("Key files")
     lines.append("-" * 9)
-    lines.append(f"RBH summary: {Path(a.rbh).resolve()}")
+    lines.append(f"Orthogroup summary: {Path(a.orthogroup_summary).resolve()}")
     lines.append(f"CDS mapping: {Path(a.mapping).resolve()}")
     lines.append(f"aBSREL foregrounds: {Path(a.absrel).resolve()}")
     lines.append(f"Branch-site results: {Path(a.branchsite).resolve()}")

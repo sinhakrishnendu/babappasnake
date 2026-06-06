@@ -1,5 +1,6 @@
 outdir: babappasnake_run
-orthogroup_method: rbh
+orthogroup_method: orthofinder
+orthology_mode: representative
 outgroup_query: ""
 alignment_methods:
   - babappalign

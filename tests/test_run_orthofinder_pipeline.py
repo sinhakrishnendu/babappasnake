@@ -5,9 +5,11 @@ from pathlib import Path
 import pytest
 
 from babappasnake.scripts.run_orthofinder_pipeline import (
+    load_member_scores_from_blast_tsv,
     load_orthogroups_from_tsv,
     parse_members,
     select_best_orthogroup_from_blast_tsv,
+    select_members_for_species,
 )
 
 
@@ -79,3 +81,29 @@ def test_select_best_orthogroup_from_blast_tsv_raises_on_no_passing_hits(tmp_pat
     )
     with pytest.raises(RuntimeError, match="No BLAST hits passed coverage"):
         select_best_orthogroup_from_blast_tsv(blast_tsv, min_coverage=0.7)
+
+
+def test_load_member_scores_from_blast_tsv_scores_selected_orthogroup_only(tmp_path: Path):
+    blast_tsv = tmp_path / "query_vs_orthogroups.tsv"
+    _write(
+        blast_tsv,
+        (
+            "q1\tOG0001||speciesA||A1\t99.0\t90\t100\t100\t1e-35\t180\n"
+            "q1\tOG0001||speciesA||A2\t98.0\t95\t100\t100\t1e-35\t220\n"
+            "q1\tOG0002||speciesA||A3\t98.0\t95\t100\t100\t1e-35\t999\n"
+            "q1\tOG0001||speciesA||A4\t98.0\t10\t100\t100\t1e-35\t999\n"
+        ),
+    )
+
+    scores = load_member_scores_from_blast_tsv(blast_tsv, min_coverage=0.7, orthogroup_id="OG0001")
+
+    assert scores == {"A1": 180.0, "A2": 220.0}
+
+
+def test_select_members_for_species_modes_handle_multicopy_members():
+    members = ["A1", "A2", "A2"]
+    scores = {"A1": 100.0, "A2": 200.0}
+
+    assert select_members_for_species(members, "strict", scores) == ([], "multi_copy_excluded")
+    assert select_members_for_species(members, "representative", scores) == (["A2"], "representative_paralog")
+    assert select_members_for_species(members, "paralog", scores) == (["A1", "A2"], "paralog_set")

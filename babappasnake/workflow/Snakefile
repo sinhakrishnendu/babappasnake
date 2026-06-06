@@ -55,11 +55,17 @@ GARD_RATE_CLASSES = int(config.get("gard_rate_classes", 3))
 if GARD_RATE_CLASSES < 1:
     raise ValueError("gard_rate_classes must be >= 1")
 RUN_GARD = RECOMBINATION_MODE == "gard"
-ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "rbh")).strip().lower()
-if ORTHOGROUP_METHOD not in {"rbh", "orthofinder", "rbh_fallback"}:
+ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "orthofinder")).strip().lower()
+if ORTHOGROUP_METHOD != "orthofinder":
     raise ValueError(
         f"Unsupported orthogroup_method in config: {ORTHOGROUP_METHOD}. "
-        "Supported: rbh, orthofinder, rbh_fallback"
+        "Supported: orthofinder"
+    )
+ORTHOLOGY_MODE = str(config.get("orthology_mode", "representative")).strip().lower()
+if ORTHOLOGY_MODE not in {"strict", "representative", "paralog"}:
+    raise ValueError(
+        f"Unsupported orthology_mode in config: {ORTHOLOGY_MODE}. "
+        "Supported: strict, representative, paralog"
     )
 
 SUPPORTED_ALIGNMENT_METHODS = ("babappalign", "mafft", "prank")
@@ -237,10 +243,14 @@ if HAVE_CDS:
                 if RUN_GARD
                 else []
             ),
-            expand(
-                OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
-                method=ALIGNMENT_METHODS,
-                trim_state=TRIM_STATES,
+            (
+                expand(
+                    OUTDIR / "asr" / "{method}" / "{trim_state}" / "asr_done.json",
+                    method=ALIGNMENT_METHODS,
+                    trim_state=TRIM_STATES,
+                )
+                if RUN_ASR
+                else []
             ),
             (
                 [
@@ -263,47 +273,36 @@ else:
             OUTDIR / "orthogroup" / "WAITING_FOR_CDS.txt"
 
 
-rule rbh_orthogroup:
+rule orthofinder_orthogroup:
     input:
         query=QUERY,
         proteomes=PROTEOMES,
     output:
         proteins=OUTDIR / "orthogroup" / "orthogroup_proteins.fasta",
         headers=OUTDIR / "orthogroup" / "orthogroup_headers.txt",
-        rbh=OUTDIR / "orthogroup" / "rbh_summary.tsv",
+        summary=OUTDIR / "orthogroup" / "orthogroup_summary.tsv",
+        metadata=OUTDIR / "orthogroup" / "orthogroup_metadata.json",
     threads: THREADS
     shell:
         r'''
         mkdir -p {OUTDIR}/orthogroup
-        if [ "{ORTHOGROUP_METHOD}" = "orthofinder" ]; then
-          python -m babappasnake.scripts.run_orthofinder_pipeline \
-            --query {input.query} \
-            --proteomes {input.proteomes} \
-            --outdir {OUTDIR}/orthogroup \
-            --coverage {COVERAGE} \
-            --threads {threads} \
-            --blastp "{BLASTP}" \
-            --makeblastdb "{MAKEBLASTDB}" \
-            --orthofinder "{ORTHOFINDER}";
-        else
-          python -m babappasnake.scripts.run_rbh_pipeline \
-            --query {input.query} \
-            --proteomes {input.proteomes} \
-            --outdir {OUTDIR}/orthogroup \
-            --coverage {COVERAGE} \
-            --threads {threads} \
-            --blastp "{BLASTP}" \
-            --makeblastdb "{MAKEBLASTDB}" \
-            --orthofinder "{ORTHOFINDER}" \
-            --mode "{ORTHOGROUP_METHOD}";
-        fi
+        python -m babappasnake.scripts.run_orthofinder_pipeline \
+          --query {input.query} \
+          --proteomes {input.proteomes} \
+          --outdir {OUTDIR}/orthogroup \
+          --coverage {COVERAGE} \
+          --threads {threads} \
+          --blastp "{BLASTP}" \
+          --makeblastdb "{MAKEBLASTDB}" \
+          --orthofinder "{ORTHOFINDER}" \
+          --orthology-mode "{ORTHOLOGY_MODE}";
         '''
 
 
 rule waiting_note:
     input:
-        proteins=rules.rbh_orthogroup.output.proteins,
-        headers=rules.rbh_orthogroup.output.headers,
+        proteins=rules.orthofinder_orthogroup.output.proteins,
+        headers=rules.orthofinder_orthogroup.output.headers,
     output:
         note=OUTDIR / "orthogroup" / "WAITING_FOR_CDS.txt",
     shell:
@@ -320,7 +319,7 @@ if HAVE_CDS:
 
     rule map_cds:
         input:
-            proteins=rules.rbh_orthogroup.output.proteins,
+            proteins=rules.orthofinder_orthogroup.output.proteins,
             cds=USER_CDS,
         output:
             mapped=OUTDIR / "mapped_cds" / "mapped_orthogroup_cds.fasta",
@@ -1028,7 +1027,7 @@ if HAVE_CDS:
 
     rule final_summary_pathway:
         input:
-            rbh=rules.rbh_orthogroup.output.rbh,
+            orthogroup_summary=rules.orthofinder_orthogroup.output.summary,
             mapping=rules.map_cds.output.table,
             absrel=OUTDIR / "hyphy" / "{method}" / "{trim_state}" / "significant_foregrounds.tsv",
             absrel_meta=OUTDIR / "hyphy" / "{method}" / "{trim_state}" / "foreground_threshold.json",
@@ -1055,7 +1054,7 @@ if HAVE_CDS:
             mkdir -p {OUTDIR}/summary/{wildcards.method}/{wildcards.trim_state}
             mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
             python -m babappasnake.scripts.summarize_results \
-              --rbh {input.rbh} \
+              --orthogroup-summary {input.orthogroup_summary} \
               --mapping {input.mapping} \
               --absrel {input.absrel} \
               --absrel-meta {input.absrel_meta} \
@@ -1220,6 +1219,7 @@ if HAVE_CDS:
                 "parameters": {
                     "coverage": COVERAGE,
                     "orthogroup_method": ORTHOGROUP_METHOD,
+                    "orthology_mode": ORTHOLOGY_MODE,
                     "outgroup_query": OUTGROUP_QUERY,
                     "iqtree_model": IQTREE_MODEL,
                     "iqtree_bootstrap": IQTREE_BOOTSTRAP,
