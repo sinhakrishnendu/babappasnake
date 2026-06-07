@@ -7,6 +7,8 @@ external_orthogroup_proteins: ""
 orthogroup_method: orthofinder
 orthology_mode: representative
 outgroup_query: ""
+tree_mode: iqtree
+user_tree: ""
 alignment_methods:
   - babappalign
   - mafft

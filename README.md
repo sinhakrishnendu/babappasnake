@@ -30,7 +30,7 @@ A typical full run performs these stages:
 2. Map user-provided coding sequence (CDS) records to the selected orthogroup proteins with coding-quality filters.
 3. Build protein and codon alignments across one or more alignment methods.
 4. Run both `raw` and `clipkit` pathway variants for robustness.
-5. Infer pathway-specific trees with IQ-TREE.
+5. Infer pathway-specific trees with IQ-TREE, or stage a user-supplied Newick tree for all pathways.
 6. Optionally root trees with an outgroup text query.
 7. Optionally screen for recombination with HyPhy genetic algorithm for recombination detection (GARD).
 8. Run HyPhy adaptive branch-site random effects likelihood (aBSREL) and mixed effects model of evolution (MEME).
@@ -44,6 +44,7 @@ Design assumptions:
 
 - The workflow operates on one orthogroup at a time.
 - CDS can be unavailable at the start. The pipeline supports a protein-first checkpointed workflow.
+- Tree inference is optional. If no user tree is supplied, IQ-TREE builds pathway-specific trees. If a user tree is supplied, IQ-TREE tree inference is skipped and the supplied tree is reused downstream.
 - Outgroup is optional. If it is absent or unusable, downstream analysis continues with the unrooted tree.
 - Robustness mode is always enforced internally as `raw + clipkit`, even if you request a single trimming mode.
 
@@ -62,10 +63,13 @@ pip install babappasnake
 
 Always needed for a complete end-to-end run after orthogroup proteins are available:
 
-- `iqtree` or `iqtree2` or `iqtree3`
 - `hyphy`
 - `codeml` from `paml`
 - `clipkit`
+
+Needed only when the workflow is asked to infer trees internally:
+
+- `iqtree` or `iqtree2` or `iqtree3`
 
 Needed only when using the default OrthoFinder-assisted orthogroup mode:
 
@@ -115,7 +119,8 @@ Behavior:
 
 - If CDS is supplied at the start, the workflow can proceed through codon, tree, HyPhy, codeml, and summary stages in one run.
 - If CDS is not supplied, the workflow stops after orthogroup definition and writes `orthogroup/WAITING_FOR_CDS.txt`.
-- You can then place CDS at `OUTDIR/user_supplied/orthogroup_cds.fasta` and resume.
+- The waiting note names the exact CDS entry point: `OUTDIR/user_supplied/orthogroup_cds.fasta`.
+- You can then place CDS at that path and resume with `babappasnake --resume --outdir OUTDIR`, or stage a file with `babappasnake --resume --outdir OUTDIR --cds /path/to/orthogroup_cds.fasta`.
 
 ### `--orthogroup-proteins`
 
@@ -136,6 +141,18 @@ Behavior:
 
 - If omitted, rooting is skipped and the unrooted tree is propagated downstream.
 - If provided but unmatched or too broad, rooting falls back safely to the unrooted tree instead of crashing the run.
+
+### `--tree-mode` and `--tree`
+
+Tree handling is controlled by `--tree-mode`.
+
+Behavior:
+
+- `--tree-mode iqtree` is the default and runs IQ-TREE for each selected method by trim pathway.
+- `--tree-mode user --tree /path/to/tree.nwk` stages a user-supplied Newick tree and reuses it for every selected pathway.
+- If a tree path is supplied with `--tree`, BABAPPASnake automatically treats the run as user-tree mode.
+- In guided interactive mode, the workflow asks whether you want to supply a tree after CDS handling. Enter `no` or leave the tree prompt empty to let IQ-TREE build the trees.
+- The user tree must use tip labels compatible with the orthogroup CDS/alignment labels used downstream.
 
 ## Orthogroup Discovery Modes
 
@@ -197,6 +214,7 @@ Important defaults in guided mode:
 - Recombination defaults to `none`.
 - ASR defaults to `yes`.
 - CDS is requested only after orthogroup definition.
+- Tree source is requested after CDS handling. Enter `no` if you want IQ-TREE to build pathway trees.
 - Outgroup is requested after CDS handling and remains optional.
 
 ### Non-interactive batch mode
@@ -255,6 +273,20 @@ babappasnake \
   --guided no
 ```
 
+### Example: use a supplied phylogeny instead of IQ-TREE
+
+```bash
+babappasnake \
+  --orthogroup-proteins /path/to/curated_orthogroup_proteins.fasta \
+  --cds /path/to/orthogroup_cds.fasta \
+  --tree-mode user \
+  --tree /path/to/curated_species_tree.nwk \
+  --outdir run_user_tree \
+  --threads 12 \
+  --interactive no \
+  --guided no
+```
+
 ### Example: enable GARD
 
 ```bash
@@ -290,6 +322,12 @@ After orthogroup definition, provide the CDS file and continue:
 babappasnake --resume --outdir run01 --cds /path/to/orthogroup_cds.fasta
 ```
 
+If the CDS file has already been placed at `run01/user_supplied/orthogroup_cds.fasta`, the shorter form is enough:
+
+```bash
+babappasnake --resume --outdir run01
+```
+
 ## Resume And Recovery
 
 Use resume whenever a run stops unexpectedly or intentionally:
@@ -311,17 +349,22 @@ What `--resume` does:
 
 - reloads `OUTDIR/config.yaml`
 - reuses saved analysis settings
-- clears stale Snakemake lock state for that run directory
-- continues incomplete work instead of restarting from scratch
+- runs `snakemake --unlock` for that run directory before continuing
+- calls Snakemake with `--rerun-incomplete`
+- continues from missing or incomplete outputs instead of restarting from the initial entry point
+- preserves completed outputs from earlier stages, including orthogroup definition after a CDS checkpoint
 
 Guided resume behavior:
 
 - saved and detected completed steps are skipped automatically
 - the session restarts near the interruption point
+- guided mode prints the exact `babappasnake --resume --outdir OUTDIR` command at the start and whenever the user stops at a step
+- if CDS is not ready, guided mode names `OUTDIR/user_supplied/orthogroup_cds.fasta`, writes `WAITING_FOR_CDS.txt`, and does not ask downstream tree or outgroup questions until resume
 
 Non-guided resume behavior:
 
-- Snakemake reruns incomplete work only
+- Snakemake reruns missing or incomplete work only
+- if the run stopped at the CDS checkpoint, placing the CDS FASTA at `OUTDIR/user_supplied/orthogroup_cds.fasta` and running `babappasnake --resume --outdir OUTDIR` continues at `map_cds`
 
 Files used for resume:
 
@@ -332,6 +375,8 @@ Allowed resume-time overrides:
 
 - `--cds PATH`
 - `--outgroup TEXT`
+- `--tree PATH`
+- `--tree-mode {iqtree,user}`
 - `--threads INT`
 - `--guided {yes,no}`
 - `--snake-args "..." `
@@ -352,8 +397,8 @@ Analysis settings that define workflow structure are intentionally not changeabl
    Expand each method into `raw` and `clipkit` analysis pathways.
 6. `gard_all_pathways`
    Optional recombination screening.
-7. `iqtree_ml_all_pathways`
-   Infer pathway trees.
+7. `tree_all_pathways`
+   Infer pathway trees with IQ-TREE or stage a user-supplied tree, depending on `--tree-mode`.
 8. `root_iqtree_outgroup_all_pathways`
    Root trees when possible, otherwise propagate unrooted trees.
 9. `hyphy_exploratory_all_pathways`
@@ -581,6 +626,8 @@ Practical note:
 ### Tree and selection options
 
 - `--outgroup TEXT`
+- `--tree-mode {iqtree,user}`
+- `--tree PATH`
 - `--threads INT`
 - `--iqtree-bootstrap INT`
 - `--iqtree-bnni {yes,no}`
@@ -606,8 +653,15 @@ This is expected when CDS was not supplied yet.
 
 Fix:
 
-1. provide `OUTDIR/user_supplied/orthogroup_cds.fasta`
-2. run `babappasnake --resume --outdir OUTDIR`
+1. Read `OUTDIR/orthogroup/WAITING_FOR_CDS.txt`.
+2. Place the CDS FASTA at the exact path shown there, normally `OUTDIR/user_supplied/orthogroup_cds.fasta`.
+3. Run `babappasnake --resume --outdir OUTDIR`.
+
+You can also let the CLI stage the file:
+
+```bash
+babappasnake --resume --outdir OUTDIR --cds /path/to/orthogroup_cds.fasta
+```
 
 ### Outgroup was not available at the start
 
@@ -626,7 +680,7 @@ Use:
 babappasnake --resume --outdir OUTDIR
 ```
 
-The workflow will reload saved settings, clear stale lock state, and continue incomplete work.
+The workflow reloads saved settings, runs `snakemake --unlock`, and continues missing or incomplete work with `--rerun-incomplete`.
 
 ### OrthoFinder finds no usable orthogroup
 

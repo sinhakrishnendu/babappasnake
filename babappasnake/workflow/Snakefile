@@ -35,6 +35,16 @@ CLIPKIT_MODE_CODON = str(config.get("clipkit_mode_codon", "kpic-smart-gap")).str
 IQTREE_MODEL = str(config.get("iqtree_model", "MFP")).strip() or "MFP"
 IQTREE_BOOTSTRAP = int(config.get("iqtree_bootstrap", 1000))
 IQTREE_BNNI = bool(config.get("iqtree_bnni", False))
+TREE_MODE = str(config.get("tree_mode", "user" if str(config.get("user_tree", "")).strip() else "iqtree")).strip().lower()
+if TREE_MODE not in {"iqtree", "user"}:
+    raise ValueError(f"Unsupported tree_mode in config: {TREE_MODE}. Supported: iqtree, user")
+USER_TREE = str(config.get("user_tree", "")).strip()
+USER_TREE_PATH = Path(USER_TREE) if USER_TREE else None
+if TREE_MODE == "user":
+    if USER_TREE_PATH is None:
+        raise ValueError("tree_mode=user requires user_tree in config.")
+    if not USER_TREE_PATH.exists() or USER_TREE_PATH.stat().st_size == 0:
+        raise ValueError(f"User-supplied tree is missing or empty: {USER_TREE_PATH}")
 ABSREL_BRANCHES = str(config.get("absrel_branches", "Leaves")).strip() or "Leaves"
 MEME_BRANCHES = str(config.get("meme_branches", "Leaves")).strip() or "Leaves"
 CODEML_CODONFREQ = int(config.get("codeml_codonfreq", 7))
@@ -189,7 +199,7 @@ EXE = config.get("executables", {})
 BLASTP = EXE.get("blastp", "blastp")
 MAKEBLASTDB = EXE.get("makeblastdb", "makeblastdb")
 ORTHOFINDER = EXE.get("orthofinder", "orthofinder")
-IQTREE = EXE["iqtree"]
+IQTREE = EXE.get("iqtree", "iqtree")
 HYPHY = EXE["hyphy"]
 CODEML = EXE["codeml"]
 CLIPKIT = EXE.get("clipkit", "clipkit")
@@ -303,11 +313,12 @@ rule define_orthogroup:
         r'''
         mkdir -p {params.orthogroup_dir:q}
         if [ "{params.source}" = "external" ]; then
-          if [ -n {params.external_query:q} ]; then
+          query_arg={params.external_query:q}
+          if [ -n "$query_arg" ]; then
             python -m babappasnake.scripts.prepare_external_orthogroup \
               --orthogroup-proteins {input.external:q} \
               --outdir {params.orthogroup_dir:q} \
-              --query-fasta {params.external_query:q};
+              --query-fasta "$query_arg";
           else
             python -m babappasnake.scripts.prepare_external_orthogroup \
               --orthogroup-proteins {input.external:q} \
@@ -340,6 +351,7 @@ rule waiting_note:
           --orthogroup {input.proteins} \
           --headers {input.headers} \
           --expected-cds {USER_CDS} \
+          --outdir {OUTDIR} \
           --outfile {output.note}
         '''
 
@@ -570,30 +582,52 @@ if HAVE_CDS:
                 )
 
 
-    rule iqtree_ml_pathway:
-        input:
-            protein=pathway_protein_alignment,
-            gard=pathway_gard_summary if RUN_GARD else []
-        output:
-            tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.treefile"
-        wildcard_constraints:
-            method=METHOD_PATTERN,
-            trim_state=TRIM_PATTERN
-        threads: PER_PATHWAY_CORES
-        params:
-            bnni="-bnni" if IQTREE_BNNI else ""
-        log:
-            OUTDIR / "logs" / "{method}" / "{trim_state}" / "iqtree_ml.log"
-        shell:
-            r'''
-            mkdir -p {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}
-            mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
-            "{IQTREE}" -s {input.protein} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}/orthogroup > {log} 2>&1
-            test -f {output.tree}
-            '''
+    if TREE_MODE == "user":
+        rule tree_pathway:
+            input:
+                protein=pathway_protein_alignment,
+                user_tree=USER_TREE_PATH,
+                gard=pathway_gard_summary if RUN_GARD else []
+            output:
+                tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.treefile"
+            wildcard_constraints:
+                method=METHOD_PATTERN,
+                trim_state=TRIM_PATTERN
+            log:
+                OUTDIR / "logs" / "{method}" / "{trim_state}" / "tree_user_supplied.log"
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}
+                mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
+                cp {input.user_tree:q} {output.tree:q}
+                test -s {output.tree:q}
+                printf 'tree_mode\tuser\nuser_tree\t%s\n' {input.user_tree:q} > {log}
+                '''
+    else:
+        rule tree_pathway:
+            input:
+                protein=pathway_protein_alignment,
+                gard=pathway_gard_summary if RUN_GARD else []
+            output:
+                tree=OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.treefile"
+            wildcard_constraints:
+                method=METHOD_PATTERN,
+                trim_state=TRIM_PATTERN
+            threads: PER_PATHWAY_CORES
+            params:
+                bnni="-bnni" if IQTREE_BNNI else ""
+            log:
+                OUTDIR / "logs" / "{method}" / "{trim_state}" / "iqtree_ml.log"
+            shell:
+                r'''
+                mkdir -p {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}
+                mkdir -p {OUTDIR}/logs/{wildcards.method}/{wildcards.trim_state}
+                "{IQTREE}" -s {input.protein} -nt {threads} -m {IQTREE_MODEL:q} -B {IQTREE_BOOTSTRAP} {params.bnni} -redo -pre {OUTDIR}/tree/{wildcards.method}/{wildcards.trim_state}/orthogroup > {log} 2>&1
+                test -f {output.tree}
+                '''
 
 
-    rule iqtree_ml_all_pathways:
+    rule tree_all_pathways:
         input:
             expand(
                 OUTDIR / "tree" / "{method}" / "{trim_state}" / "orthogroup.treefile",
@@ -602,9 +636,14 @@ if HAVE_CDS:
             )
 
 
+    rule iqtree_ml_all_pathways:
+        input:
+            rules.tree_all_pathways.input
+
+
     rule iqtree_ml_all_methods:
         input:
-            rules.iqtree_ml_all_pathways.input
+            rules.tree_all_pathways.input
 
 
     rule root_iqtree_outgroup_pathway:
@@ -1251,6 +1290,8 @@ if HAVE_CDS:
                     "orthogroup_method": ORTHOGROUP_METHOD,
                     "orthology_mode": ORTHOLOGY_MODE,
                     "outgroup_query": OUTGROUP_QUERY,
+                    "tree_mode": TREE_MODE,
+                    "user_tree": str(USER_TREE_PATH) if USER_TREE_PATH else "",
                     "iqtree_model": IQTREE_MODEL,
                     "iqtree_bootstrap": IQTREE_BOOTSTRAP,
                     "iqtree_bnni": IQTREE_BNNI,

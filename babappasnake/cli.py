@@ -44,6 +44,7 @@ ORTHOGROUP_SOURCE_CHOICES = ("orthofinder", "external")
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
 RECOMBINATION_CHOICES = ("none", "gard", "auto")
 GARD_MODE_CHOICES = ("Normal", "Faster")
+TREE_MODE_CHOICES = ("iqtree", "user")
 FORCED_TRIM_STRATEGY = "both"
 FORCED_TRIM_STATES = ["raw", "clipkit"]
 DEFAULT_TOTAL_THREADS = max(1, os.cpu_count() or 1)
@@ -235,6 +236,19 @@ def parse_recombination_mode(raw: object) -> str:
 def effective_recombination_mode(raw: object) -> str:
     mode = parse_recombination_mode(raw)
     return "gard" if mode == "auto" else mode
+
+
+def parse_tree_mode(raw: object) -> str:
+    mode = str(raw or "iqtree").strip().lower()
+    if mode not in TREE_MODE_CHOICES:
+        raise SystemExit("Invalid --tree-mode option. Choose one of: iqtree, user")
+    return mode
+
+
+def tree_mode_from_args(args: argparse.Namespace) -> str:
+    if str(getattr(args, "user_tree", "") or "").strip():
+        return "user"
+    return parse_tree_mode(getattr(args, "tree_mode", "iqtree"))
 
 
 def parse_yes_no_bool(raw: object, default: bool = True) -> bool:
@@ -442,6 +456,14 @@ def validate_recombination_tools(mode: str, resolved_tools: dict[str, str]) -> N
         )
 
 
+def filter_missing_tools_for_run(
+    missing: list[tuple[object, tuple[str, ...]]],
+    tree_mode: str,
+) -> list[tuple[object, tuple[str, ...]]]:
+    skipped = {"iqtree"} if parse_tree_mode(tree_mode) == "user" else set()
+    return [(spec, choices) for spec, choices in missing if getattr(spec, "key", "") not in skipped]
+
+
 def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if args.interactive == "no":
         return args
@@ -491,9 +513,25 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
             CLIPKIT_MODE_CHOICES,
             args.clipkit_mode_codon,
         )
-    args.iqtree_bootstrap = prompt_bootstrap(int(args.iqtree_bootstrap))
-    args.iqtree_bnni = "yes" if prompt_yes_no("Use IQ-TREE -bnni?", args.iqtree_bnni == "yes") else "no"
-    args.iqtree_model = prompt_text("IQ-TREE model string (--iqtree-model)", args.iqtree_model, required=True)
+    use_user_tree = prompt_yes_no(
+        "Use a user-supplied tree instead of building one with IQ-TREE?",
+        tree_mode_from_args(args) == "user",
+    )
+    if use_user_tree:
+        args.tree_mode = "user"
+        args.user_tree = prompt_text(
+            "User-supplied Newick tree path (--tree)",
+            args.user_tree or "",
+            required=True,
+        )
+        print("Tree source: user-supplied Newick tree; IQ-TREE tree inference will be skipped.")
+    else:
+        args.tree_mode = "iqtree"
+        args.user_tree = ""
+        args.iqtree_bootstrap = prompt_bootstrap(int(args.iqtree_bootstrap))
+        args.iqtree_bnni = "yes" if prompt_yes_no("Use IQ-TREE -bnni?", args.iqtree_bnni == "yes") else "no"
+        args.iqtree_model = prompt_text("IQ-TREE model string (--iqtree-model)", args.iqtree_model, required=True)
+    args.tree_choice_confirmed = True
     args.absrel_branches = prompt_hyphy_branches(
         "HyPhy aBSREL branches selector (--absrel-branches)",
         str(args.absrel_branches),
@@ -540,9 +578,13 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     if "clipkit" in trim_states:
         print(f"- clipkit_mode_protein: {args.clipkit_mode_protein}")
         print(f"- clipkit_mode_codon: {args.clipkit_mode_codon}")
-    print(f"- iqtree_bootstrap: {args.iqtree_bootstrap}")
-    print(f"- iqtree_bnni: {args.iqtree_bnni}")
-    print(f"- iqtree_model: {args.iqtree_model}")
+    print(f"- tree_mode: {args.tree_mode}")
+    if args.tree_mode == "user":
+        print(f"- tree: {args.user_tree}")
+    else:
+        print(f"- iqtree_bootstrap: {args.iqtree_bootstrap}")
+        print(f"- iqtree_bnni: {args.iqtree_bnni}")
+        print(f"- iqtree_model: {args.iqtree_model}")
     print(f"- absrel_branches: {args.absrel_branches}")
     print(f"- meme_branches: {args.meme_branches}")
     print(f"- codeml_codonfreq: {args.codeml_codonfreq}")
@@ -602,6 +644,19 @@ def parse_args() -> argparse.Namespace:
         help=f"Total Snakemake cores (equally split across selected MSA pathways) [default: {DEFAULT_TOTAL_THREADS}]",
     )
     p.add_argument("--outgroup", default="", help="Outgroup label query used to root the IQ-TREE output (case-insensitive substring match)")
+    p.add_argument(
+        "--tree-mode",
+        choices=list(TREE_MODE_CHOICES),
+        default="iqtree",
+        help="Tree source: iqtree builds pathway trees, user reuses a supplied Newick tree for all pathways [default: iqtree]",
+    )
+    p.add_argument(
+        "--tree",
+        "--user-tree",
+        dest="user_tree",
+        default=None,
+        help="User-supplied Newick tree used for all pathways when --tree-mode user is selected",
+    )
     p.add_argument("--iqtree-bootstrap", type=int, default=1000, help="IQ-TREE ultrafast bootstrap replicates [default: 1000]")
     p.add_argument("--iqtree-bnni", choices=["yes", "no"], default="no", help="Enable IQ-TREE -bnni [default: no]")
     p.add_argument("--iqtree-model", default="MFP", help="IQ-TREE model string [default: MFP]")
@@ -682,6 +737,14 @@ def validate_inputs(args: argparse.Namespace) -> None:
         cds_path = Path(args.cds)
         if not cds_path.is_file():
             raise SystemExit(f"--cds must point to an existing FASTA file: {cds_path}")
+    tree_mode = tree_mode_from_args(args)
+    args.tree_mode = tree_mode
+    if tree_mode == "user":
+        user_tree = Path(str(getattr(args, "user_tree", "") or "")).expanduser()
+        if not str(getattr(args, "user_tree", "") or "").strip():
+            raise SystemExit("--tree-mode user requires --tree / --user-tree pointing to an existing Newick tree.")
+        if not user_tree.is_file():
+            raise SystemExit(f"--tree must point to an existing Newick tree file: {user_tree}")
     parse_alignment_method_option(args.alignment_methods)
     if str(args.orthogroup_method).strip().lower() not in ORTHOGROUP_METHOD_CHOICES:
         raise SystemExit(
@@ -718,6 +781,10 @@ def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
         cds_dst_dir = outdir / "user_supplied"
         cds_dst_dir.mkdir(exist_ok=True)
         shutil.copy2(args.cds, cds_dst_dir / "orthogroup_cds.fasta")
+    if getattr(args, "user_tree", None):
+        tree_dst_dir = outdir / "user_supplied"
+        tree_dst_dir.mkdir(exist_ok=True)
+        shutil.copy2(Path(str(args.user_tree)).expanduser(), tree_dst_dir / "user_tree.nwk")
 
 
 def write_config(
@@ -733,7 +800,9 @@ def write_config(
     query_path = outdir / "inputs" / "query.fasta"
     proteomes_path = outdir / "inputs" / "proteomes"
     external_orthogroup_path = outdir / "user_supplied" / "external_orthogroup_proteins.fasta"
+    user_tree_path = outdir / "user_supplied" / "user_tree.nwk"
     orthogroup_source = "external" if external_orthogroup_path.exists() else "orthofinder"
+    tree_mode = "user" if user_tree_path.exists() else parse_tree_mode(getattr(args, "tree_mode", "iqtree"))
     cfg = {
         "outdir": str(outdir.resolve()),
         "query_fasta": str(query_path.resolve()) if query_path.exists() else "",
@@ -754,6 +823,8 @@ def write_config(
         "coverage": float(args.coverage),
         "threads": int(args.threads),
         "outgroup_query": str(args.outgroup).strip(),
+        "tree_mode": tree_mode,
+        "user_tree": str(user_tree_path.resolve()) if user_tree_path.exists() else "",
         "iqtree_bootstrap": int(args.iqtree_bootstrap),
         "iqtree_bnni": args.iqtree_bnni == "yes",
         "iqtree_model": str(args.iqtree_model).strip(),
@@ -815,6 +886,32 @@ def build_snakemake_cmd(
     return cmd
 
 
+def build_snakemake_unlock_cmd(
+    config_path: Path,
+    snakefile: Path,
+    workdir: Path | None = None,
+) -> list[str]:
+    run_dir = Path(workdir) if workdir is not None else config_path.parent
+    return [
+        sys.executable,
+        "-m",
+        "snakemake",
+        "--snakefile",
+        str(snakefile),
+        "--directory",
+        str(run_dir.resolve()),
+        "--configfile",
+        str(config_path),
+        "--unlock",
+    ]
+
+
+def unlock_snakemake_run(config_path: Path, snakefile: Path, workdir: Path | None = None) -> int:
+    cmd = build_snakemake_unlock_cmd(config_path, snakefile, workdir=workdir)
+    result = subprocess.run(cmd, check=False)
+    return result.returncode
+
+
 def run_snakemake_target(
     config_path: Path,
     cores: int,
@@ -828,12 +925,51 @@ def run_snakemake_target(
     return result.returncode
 
 
+def resume_command(outdir: Path) -> str:
+    return f"babappasnake --resume --outdir {shlex.quote(str(Path(outdir).resolve()))}"
+
+
+def resume_with_cds_command(outdir: Path) -> str:
+    return f"{resume_command(outdir)} --cds /path/to/orthogroup_cds.fasta"
+
+
+def print_guided_resume_banner(outdir: Path) -> None:
+    print("Guided mode enabled.")
+    print("You can stop after any step; completed outputs will be reused.")
+    print(f"Resume command: {resume_command(outdir)}")
+
+
+def print_cds_resume_instructions(outdir: Path) -> None:
+    expected = (outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()
+    waiting_note = outdir / "orthogroup" / "WAITING_FOR_CDS.txt"
+    print("")
+    print("CDS checkpoint reached.")
+    print(f"Place the orthogroup CDS FASTA at: {expected}")
+    print(f"Then resume with: {resume_command(outdir)}")
+    print("Or stage a CDS file directly with:")
+    print(f"  {resume_with_cds_command(outdir)}")
+    if waiting_note.exists():
+        print(f"Detailed instructions were written to: {waiting_note}")
+
+
+def staged_cds_ready(outdir: Path) -> bool:
+    staged_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
+    return staged_cds.exists() and staged_cds.stat().st_size > 0
+
+
+def print_resume_after_interruption(outdir: Path) -> None:
+    print("")
+    print("The run did not complete.")
+    print(f"After fixing the cause, resume from existing outputs with: {resume_command(outdir)}")
+
+
 def build_step_plan(
     have_cds: bool,
     methods: list[str],
     trim_states: list[str],
     recombination_mode: str,
     run_asr: bool = True,
+    tree_mode: str = "iqtree",
 ) -> list[StepSpec]:
     pathways = enumerate_pathways(methods, trim_states)
 
@@ -893,8 +1029,12 @@ def build_step_plan(
     steps.extend(
         [
             StepSpec(
-                "iqtree_ml_all_pathways",
-                "Infer ML phylogeny with IQ-TREE for all selected pathways.",
+                "tree_all_pathways",
+                (
+                    "Stage user-supplied tree for all selected pathways."
+                    if parse_tree_mode(tree_mode) == "user"
+                    else "Infer ML phylogeny with IQ-TREE for all selected pathways."
+                ),
                 tuple(f"tree/{method}/{trim_state}/orthogroup.treefile" for method in methods for trim_state in trim_states),
             ),
             StepSpec(
@@ -1078,6 +1218,7 @@ def run_guided_step(
     action = prompt_step_action(can_skip=can_skip)
     if action == "stop":
         print("Guided run stopped by user.")
+        print(f"Resume command: {resume_command(outdir)}")
         return 130
     if action == "skip":
         if on_skip is not None:
@@ -1129,6 +1270,8 @@ def prompt_for_cds_after_orthogroup(args: argparse.Namespace, outdir: Path) -> b
     default = str(args.cds) if args.cds else (str(user_cds) if existing else "")
     print("")
     print("CDS input step (required for codon/tree/hyphy/codeml downstream).")
+    print(f"Expected CDS checkpoint path: {user_cds.resolve()}")
+    print(f"Resume command after placing CDS there: {resume_command(outdir)}")
     while True:
         entered = prompt_text(
             "Provide CDS FASTA path now (or press Enter to continue without CDS)",
@@ -1136,11 +1279,21 @@ def prompt_for_cds_after_orthogroup(args: argparse.Namespace, outdir: Path) -> b
             required=False,
         ).strip()
         if not entered:
-            return user_cds.exists() and user_cds.stat().st_size > 0
+            if staged_cds_ready(outdir):
+                return True
+            print("")
+            print("No CDS file staged yet. BABAPPASnake will write the waiting note and stop at this checkpoint.")
+            print(f"When the CDS is ready, place it at: {user_cds.resolve()}")
+            print(f"Then resume with: {resume_command(outdir)}")
+            return False
 
         candidate = Path(entered).expanduser()
         if not candidate.is_file():
             print(f"CDS file not found: {candidate}")
+            default = ""
+            continue
+        if candidate.stat().st_size == 0:
+            print(f"CDS file is empty: {candidate}")
             default = ""
             continue
 
@@ -1148,6 +1301,7 @@ def prompt_for_cds_after_orthogroup(args: argparse.Namespace, outdir: Path) -> b
         if candidate.resolve() != user_cds.resolve():
             shutil.copy2(candidate, user_cds)
         print(f"Staged CDS file: {user_cds}")
+        print(f"Resume command for this run: {resume_command(outdir)}")
         return True
 
 
@@ -1157,6 +1311,42 @@ def set_outgroup_in_config(config_path: Path, outgroup_query: str) -> None:
     cfg["outgroup_query"] = outgroup_query
     with open(config_path, "w", encoding="utf-8") as fh:
         yaml.safe_dump(cfg, fh, sort_keys=False)
+
+
+def set_tree_in_config(config_path: Path, tree_mode: str, user_tree: str | Path = "") -> None:
+    with open(config_path, "r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+    cfg["tree_mode"] = parse_tree_mode(tree_mode)
+    cfg["user_tree"] = str(user_tree)
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(cfg, fh, sort_keys=False)
+
+
+def prompt_for_user_tree_after_cds(args: argparse.Namespace, outdir: Path) -> Path | None:
+    staged_tree = outdir / "user_supplied" / "user_tree.nwk"
+    existing = staged_tree.exists() and staged_tree.stat().st_size > 0
+    default = str(args.user_tree) if getattr(args, "user_tree", None) else (str(staged_tree) if existing else "")
+    while True:
+        entered = prompt_text(
+            "Provide Newick tree path now (or enter no to let IQ-TREE build trees)",
+            default,
+            required=False,
+        ).strip()
+        if not entered or entered.lower() in {"n", "no"}:
+            return None
+
+        candidate = Path(entered).expanduser()
+        if not candidate.is_file():
+            print(f"Tree file not found: {candidate}")
+            default = ""
+            continue
+
+        staged_tree.parent.mkdir(parents=True, exist_ok=True)
+        if candidate.resolve() != staged_tree.resolve():
+            shutil.copy2(candidate, staged_tree)
+        args.tree_mode = "user"
+        args.user_tree = str(staged_tree)
+        return staged_tree
 
 
 def stage_unrooted_tree_for_downstream(outdir: Path, methods: list[str], trim_states: list[str]) -> None:
@@ -1200,6 +1390,9 @@ def validate_resume_request(args: argparse.Namespace, argv: list[str]) -> None:
         "--outdir",
         "--cds",
         "--outgroup",
+        "--tree",
+        "--user-tree",
+        "--tree-mode",
         "--threads",
         "--guided",
         "--snake-args",
@@ -1237,7 +1430,7 @@ def validate_resume_request(args: argparse.Namespace, argv: list[str]) -> None:
     blocked = sorted(seen & disallowed)
     if blocked:
         raise SystemExit(
-            "Resume can only override outdir, cds, outgroup, threads, guided, and snake-args. "
+            "Resume can only override outdir, cds, outgroup, tree, tree-mode, threads, guided, and snake-args. "
             "Start a new run directory to change analysis settings: " + ", ".join(blocked)
         )
     unknown = sorted(token for token in seen if token not in allowed and token not in disallowed)
@@ -1271,6 +1464,9 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
     config_path = outdir / "config.yaml"
     if not config_path.exists():
         raise SystemExit(f"Cannot resume because config.yaml is missing: {config_path}")
+
+    requested_user_tree = getattr(args, "user_tree", None)
+    requested_tree_mode = getattr(args, "tree_mode", "iqtree")
 
     with open(config_path, "r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
@@ -1321,6 +1517,33 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
         cfg["outgroup_query"] = str(args.outgroup or "").strip()
     else:
         args.outgroup = str(cfg.get("outgroup_query", ""))
+    args.tree_mode = str(cfg.get("tree_mode", "iqtree"))
+    args.user_tree = str(cfg.get("user_tree", ""))
+    tree_override = _argv_has(argv, "--tree") or _argv_has(argv, "--user-tree")
+    tree_mode_override = _argv_has(argv, "--tree-mode")
+    if tree_override:
+        candidate = Path(str(requested_user_tree)).expanduser()
+        if not candidate.is_file():
+            raise SystemExit(f"--tree must point to an existing Newick tree file: {candidate}")
+        user_tree_dst = outdir / "user_supplied" / "user_tree.nwk"
+        user_tree_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(candidate, user_tree_dst)
+        cfg["tree_mode"] = "user"
+        cfg["user_tree"] = str(user_tree_dst.resolve())
+        args.tree_mode = "user"
+        args.user_tree = str(user_tree_dst)
+    elif tree_mode_override:
+        requested_tree_mode_normalized = parse_tree_mode(requested_tree_mode)
+        if requested_tree_mode_normalized == "user" and not str(cfg.get("user_tree", "")).strip():
+            raise SystemExit("--tree-mode user on resume requires --tree unless a user tree is already staged.")
+        cfg["tree_mode"] = requested_tree_mode_normalized
+        if requested_tree_mode_normalized == "iqtree":
+            cfg["user_tree"] = ""
+        args.tree_mode = requested_tree_mode_normalized
+        args.user_tree = str(cfg.get("user_tree", ""))
+    else:
+        args.tree_mode = str(cfg.get("tree_mode", "iqtree"))
+        args.user_tree = str(cfg.get("user_tree", ""))
 
     user_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
     if _argv_has(argv, "--cds") and args.cds:
@@ -1345,6 +1568,8 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
     cfg["guided_mode"] = str(args.guided).strip().lower() == "yes"
     cfg["snake_args"] = str(args.snake_args or "")
     cfg["outgroup_query"] = str(args.outgroup or "").strip()
+    cfg["tree_mode"] = parse_tree_mode(str(cfg.get("tree_mode", "iqtree")))
+    cfg["user_tree"] = str(cfg.get("user_tree", ""))
 
     with open(config_path, "w", encoding="utf-8") as fh:
         yaml.safe_dump(cfg, fh, sort_keys=False)
@@ -1357,6 +1582,8 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
             "orthogroup_method": "orthofinder",
             "orthogroup_source": cfg["orthogroup_source"],
             "orthology_mode": args.orthology_mode,
+            "tree_mode": cfg["tree_mode"],
+            "user_tree": cfg["user_tree"],
         },
     )
     return args, config_path, outdir
@@ -1392,7 +1619,7 @@ def run_guided_pipeline(
             "orthogroup/orthogroup_metadata.json",
         ),
     )
-    print("Guided mode enabled.")
+    print_guided_resume_banner(outdir)
     code = run_guided_step(
         config_path=config_path,
         outdir=outdir,
@@ -1408,21 +1635,56 @@ def run_guided_pipeline(
 
     print_orthogroup_membership(outdir)
 
-    staged_cds = outdir / "user_supplied" / "orthogroup_cds.fasta"
-    have_cds = staged_cds.exists() and staged_cds.stat().st_size > 0
+    have_cds = staged_cds_ready(outdir)
     if is_tty_interactive():
         have_cds = prompt_for_cds_after_orthogroup(args, outdir)
-        outgroup_prompt = prompt_text(
-            "Optional outgroup query for rooting (press Enter to skip)",
-            str(args.outgroup or ""),
-            required=False,
-        ).strip()
-        args.outgroup = outgroup_prompt
-        set_outgroup_in_config(config_path, args.outgroup)
-        if args.outgroup:
-            print(f"Using outgroup query: {args.outgroup}")
+        if have_cds:
+            staged_tree = outdir / "user_supplied" / "user_tree.nwk"
+            if tree_mode_from_args(args) == "user" and staged_tree.exists() and staged_tree.stat().st_size > 0:
+                args.tree_mode = "user"
+                args.user_tree = str(staged_tree)
+                set_tree_in_config(config_path, "user", staged_tree)
+                print(f"Using user-supplied tree: {staged_tree}")
+            elif getattr(args, "tree_choice_confirmed", False):
+                args.tree_mode = "iqtree"
+                args.user_tree = ""
+                set_tree_in_config(config_path, "iqtree", "")
+                print("Using IQ-TREE for pathway tree inference based on the earlier interactive selection.")
+            else:
+                use_user_tree = prompt_yes_no(
+                    "Use a user-supplied tree instead of building one with IQ-TREE?",
+                    False,
+                )
+                if use_user_tree:
+                    staged = prompt_for_user_tree_after_cds(args, outdir)
+                    if staged:
+                        set_tree_in_config(config_path, "user", staged)
+                        print(f"Using user-supplied tree: {staged}")
+                    else:
+                        args.tree_mode = "iqtree"
+                        args.user_tree = ""
+                        set_tree_in_config(config_path, "iqtree", "")
+                        print("No user tree supplied; IQ-TREE will infer pathway trees.")
+                else:
+                    args.tree_mode = "iqtree"
+                    args.user_tree = ""
+                    set_tree_in_config(config_path, "iqtree", "")
+                    print("No user tree supplied; IQ-TREE will infer pathway trees.")
         else:
-            print("No outgroup query provided; tree will be left unrooted for downstream use.")
+            args.outgroup = str(args.outgroup or "").strip()
+            set_outgroup_in_config(config_path, args.outgroup)
+        if have_cds:
+            outgroup_prompt = prompt_text(
+                "Optional outgroup query for rooting (press Enter to skip)",
+                str(args.outgroup or ""),
+                required=False,
+            ).strip()
+            args.outgroup = outgroup_prompt
+            set_outgroup_in_config(config_path, args.outgroup)
+            if args.outgroup:
+                print(f"Using outgroup query: {args.outgroup}")
+            else:
+                print("No outgroup query provided; tree will be left unrooted for downstream use.")
 
     steps = build_step_plan(
         have_cds,
@@ -1430,6 +1692,7 @@ def run_guided_pipeline(
         trim_states,
         args.recombination,
         run_asr=parse_yes_no_bool(getattr(args, "run_asr", "yes"), True),
+        tree_mode=tree_mode_from_args(args),
     )
     total_steps = 1 + len(steps)
     print(f"Planned remaining steps: {len(steps)}")
@@ -1464,7 +1727,13 @@ def main() -> None:
         snakefile = ir.files("babappasnake").joinpath("workflow", "Snakefile")
         methods = parse_alignment_method_option(args.alignment_methods)
         trim_states = trim_states_from_strategy(args.trim_strategy)
-        have_cds = (outdir / "user_supplied" / "orthogroup_cds.fasta").exists()
+        have_cds = staged_cds_ready(outdir)
+        unlock_rc = unlock_snakemake_run(config_path, snakefile, workdir=outdir)
+        if unlock_rc != 0:
+            print(
+                "[WARN] Snakemake unlock returned a non-zero status; continuing resume attempt.",
+                file=sys.stderr,
+            )
         if args.guided == "yes" and is_tty_interactive():
             rc = run_guided_pipeline(
                 args=args,
@@ -1484,15 +1753,21 @@ def main() -> None:
                 snakefile=snakefile,
                 workdir=outdir,
             )
+        if rc == 0 and not have_cds and not staged_cds_ready(outdir):
+            print_cds_resume_instructions(outdir)
+        if rc != 0:
+            print_resume_after_interruption(outdir)
         raise SystemExit(rc)
 
     args = maybe_prompt_interactive(args)
+    args.tree_mode = tree_mode_from_args(args)
     validate_inputs(args)
     args.orthogroup_method = "orthofinder"
     args.orthology_mode = str(args.orthology_mode).strip().lower()
     orthogroup_source = orthogroup_source_from_args(args)
     args.recombination = parse_recombination_mode(args.recombination)
     recombination_mode = effective_recombination_mode(args.recombination)
+    tree_mode = parse_tree_mode(args.tree_mode)
     methods = parse_alignment_method_option(args.alignment_methods)
     requested_trim_strategy = derive_trim_strategy(args.trim_strategy, args.use_clipkit)
     effective_trim_strategy, trim_states = force_robustness_trim_strategy(requested_trim_strategy)
@@ -1523,6 +1798,9 @@ def main() -> None:
     print(f"[INFO] Orthogroup source: {orthogroup_source}.")
     if orthogroup_source == "orthofinder":
         print(f"[INFO] Orthology mode: {args.orthology_mode}.")
+    print(f"[INFO] Tree mode: {tree_mode}.")
+    if tree_mode == "user":
+        print(f"[INFO] User-supplied tree: {args.user_tree}.")
     if recombination_mode == "gard":
         print(
             f"[INFO] GARD parameters: mode={args.gard_mode}, "
@@ -1530,6 +1808,7 @@ def main() -> None:
         )
 
     resolved, missing = resolve_tools()
+    missing = filter_missing_tools_for_run(missing, tree_mode)
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
@@ -1572,6 +1851,10 @@ def main() -> None:
             snakefile=snakefile,
             workdir=outdir,
         )
+    if rc == 0 and not staged_cds_ready(outdir):
+        print_cds_resume_instructions(outdir)
+    if rc != 0:
+        print_resume_after_interruption(outdir)
     raise SystemExit(rc)
 
 
