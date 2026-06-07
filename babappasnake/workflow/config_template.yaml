@@ -1,4 +1,9 @@
 outdir: babappasnake_run
+query_fasta: ""
+proteomes_dir: ""
+user_cds: ""
+orthogroup_source: orthofinder
+external_orthogroup_proteins: ""
 orthogroup_method: orthofinder
 orthology_mode: representative
 outgroup_query: ""

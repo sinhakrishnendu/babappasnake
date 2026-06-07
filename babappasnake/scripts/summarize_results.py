@@ -53,6 +53,15 @@ def count_retained_orthogroup_members(rows: list[dict]) -> int:
     return retained_partners + 1
 
 
+def infer_orthogroup_source(rows: list[dict]) -> str:
+    if not rows:
+        return "unknown"
+    mode = pick_value(rows[0], ("orthology_mode",), default="NA").lower()
+    if mode == "external":
+        return "external"
+    return "orthofinder"
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--orthogroup-summary", required=True)
@@ -89,7 +98,9 @@ def main() -> None:
     lines.append(header)
     lines.append("=" * 42)
     lines.append("")
-    lines.append(f"Orthogroup members retained by OrthoFinder: {count_retained_orthogroup_members(orthogroup)}")
+    orthogroup_source = infer_orthogroup_source(orthogroup)
+    lines.append(f"Orthogroup source: {orthogroup_source}")
+    lines.append(f"Orthogroup members retained: {count_retained_orthogroup_members(orthogroup)}")
     if orthogroup:
         lines.append(f"Orthology mode: {pick_value(orthogroup[0], ('orthology_mode',), default='NA')}")
     lines.append(f"CDS-to-protein mappings retained: {len(mapping)}")
@@ -97,7 +108,7 @@ def main() -> None:
     lines.append("Exploratory HyPhy stage")
     lines.append("-" * 24)
     if absrel:
-        lines.append(f"Significant leaf branches by aBSREL (p <= {absrel_cutoff:.3f}): {len(absrel)}")
+        lines.append(f"Significant aBSREL foreground branches (p <= {absrel_cutoff:.3f}): {len(absrel)}")
         for row in absrel:
             lines.append(f"  - {row['foreground_branch']} (aBSREL p={row['absrel_p']})")
     else:

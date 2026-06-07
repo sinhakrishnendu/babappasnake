@@ -40,6 +40,7 @@ ALIGNMENT_METHOD_OPTION_MAP: dict[str, tuple[str, ...]] = {
 }
 ORTHOGROUP_METHOD_CHOICES = ("orthofinder",)
 ORTHOLOGY_MODE_CHOICES = ("strict", "representative", "paralog")
+ORTHOGROUP_SOURCE_CHOICES = ("orthofinder", "external")
 TRIM_STRATEGY_CHOICES = ("raw", "clipkit", "both")
 RECOMBINATION_CHOICES = ("none", "gard", "auto")
 GARD_MODE_CHOICES = ("Normal", "Faster")
@@ -429,6 +430,10 @@ def validate_orthogroup_method_tools(method: str, resolved_tools: dict[str, str]
     raise SystemExit("Unsupported orthogroup method. Supported: orthofinder")
 
 
+def orthogroup_source_from_args(args: argparse.Namespace) -> str:
+    return "external" if str(getattr(args, "orthogroup_proteins", "") or "").strip() else "orthofinder"
+
+
 def validate_recombination_tools(mode: str, resolved_tools: dict[str, str]) -> None:
     normalized = effective_recombination_mode(mode)
     if normalized == "gard" and "hyphy" not in resolved_tools:
@@ -444,12 +449,21 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
         return args
 
     print("\nInteractive babappasnake configuration\n")
-    args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=True)
-    args.query = prompt_text("Query FASTA (--query)", args.query or "", required=True)
+    args.orthogroup_proteins = prompt_text(
+        "Externally curated orthogroup protein FASTA (--orthogroup-proteins, optional)",
+        args.orthogroup_proteins or "",
+        required=False,
+    )
+    external_orthogroup = bool(str(args.orthogroup_proteins or "").strip())
+    args.prot = prompt_text("Proteomes directory (--prot)", args.prot or "", required=not external_orthogroup)
+    args.query = prompt_text("Query FASTA (--query)", args.query or "", required=not external_orthogroup)
     args.outdir = prompt_text("Output directory (--outdir)", args.outdir, required=True)
     args.orthogroup_method = "orthofinder"
-    print("Orthogroup backend is fixed in interactive mode: OrthoFinder.")
-    args.orthology_mode = prompt_orthology_mode(str(args.orthology_mode))
+    if external_orthogroup:
+        print("Orthogroup source: external curated protein FASTA; OrthoFinder will be skipped.")
+    else:
+        print("Orthogroup backend is fixed in interactive mode: OrthoFinder.")
+        args.orthology_mode = prompt_orthology_mode(str(args.orthology_mode))
     args.alignment_methods = prompt_alignment_method_option(str(args.alignment_methods))
     args.coverage = prompt_float("Minimum query coverage for OrthoFinder mapping (--coverage)", float(args.coverage))
     args.threads = prompt_int("Total cores (--threads)", int(args.threads))
@@ -510,6 +524,7 @@ def maybe_prompt_interactive(args: argparse.Namespace) -> argparse.Namespace:
     print(f"- prot: {args.prot}")
     print(f"- query: {args.query}")
     print(f"- outdir: {args.outdir}")
+    print(f"- orthogroup_source: {orthogroup_source_from_args(args)}")
     print(f"- orthogroup_method: {args.orthogroup_method}")
     print(f"- orthology_mode: {args.orthology_mode}")
     print(f"- alignment_methods: {format_alignment_option(str(args.alignment_methods))}")
@@ -548,6 +563,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--prot", default=None, help="Path to proteomes folder")
     p.add_argument("--query", default=None, help="Path to protein query FASTA")
     p.add_argument("--cds", default=None, help="Optional CDS FASTA for the orthogroup")
+    p.add_argument(
+        "--orthogroup-proteins",
+        default=None,
+        help=(
+            "Externally curated orthogroup protein FASTA. When provided, "
+            "BABAPPASNAKE skips OrthoFinder and starts downstream analysis from this FASTA."
+        ),
+    )
     p.add_argument(
         "--orthogroup-method",
         choices=list(ORTHOGROUP_METHOD_CHOICES),
@@ -635,19 +658,26 @@ def parse_args() -> argparse.Namespace:
 
 def validate_inputs(args: argparse.Namespace) -> None:
     missing = []
-    if not args.prot:
+    external_orthogroup = orthogroup_source_from_args(args) == "external"
+    if not external_orthogroup and not args.prot:
         missing.append("--prot")
-    if not args.query:
+    if not external_orthogroup and not args.query:
         missing.append("--query")
     if missing:
         raise SystemExit(f"Missing required arguments: {', '.join(missing)}")
 
-    prot_path = Path(args.prot)
-    if not prot_path.is_dir():
-        raise SystemExit(f"--prot must be an existing directory: {prot_path}")
-    query_path = Path(args.query)
-    if not query_path.is_file():
-        raise SystemExit(f"--query must be an existing FASTA file: {query_path}")
+    if args.orthogroup_proteins:
+        orthogroup_path = Path(args.orthogroup_proteins)
+        if not orthogroup_path.is_file():
+            raise SystemExit(f"--orthogroup-proteins must point to an existing FASTA file: {orthogroup_path}")
+    if args.prot:
+        prot_path = Path(args.prot)
+        if not prot_path.is_dir():
+            raise SystemExit(f"--prot must be an existing directory: {prot_path}")
+    if args.query:
+        query_path = Path(args.query)
+        if not query_path.is_file():
+            raise SystemExit(f"--query must be an existing FASTA file: {query_path}")
     if args.cds:
         cds_path = Path(args.cds)
         if not cds_path.is_file():
@@ -672,12 +702,18 @@ def validate_inputs(args: argparse.Namespace) -> None:
 def stage_inputs(args: argparse.Namespace, outdir: Path) -> None:
     staged = outdir / "inputs"
     staged.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(args.query, staged / "query.fasta")
-    prot_dst = staged / "proteomes"
-    prot_dst.mkdir(exist_ok=True)
-    for item in sorted(Path(args.prot).iterdir()):
-        if item.is_file():
-            shutil.copy2(item, prot_dst / item.name)
+    if args.query:
+        shutil.copy2(args.query, staged / "query.fasta")
+    if args.prot:
+        prot_dst = staged / "proteomes"
+        prot_dst.mkdir(exist_ok=True)
+        for item in sorted(Path(args.prot).iterdir()):
+            if item.is_file():
+                shutil.copy2(item, prot_dst / item.name)
+    if args.orthogroup_proteins:
+        external_dst_dir = outdir / "user_supplied"
+        external_dst_dir.mkdir(exist_ok=True)
+        shutil.copy2(args.orthogroup_proteins, external_dst_dir / "external_orthogroup_proteins.fasta")
     if args.cds:
         cds_dst_dir = outdir / "user_supplied"
         cds_dst_dir.mkdir(exist_ok=True)
@@ -694,11 +730,19 @@ def write_config(
     per_method_cores: int,
     per_pathway_cores: int,
 ) -> Path:
+    query_path = outdir / "inputs" / "query.fasta"
+    proteomes_path = outdir / "inputs" / "proteomes"
+    external_orthogroup_path = outdir / "user_supplied" / "external_orthogroup_proteins.fasta"
+    orthogroup_source = "external" if external_orthogroup_path.exists() else "orthofinder"
     cfg = {
         "outdir": str(outdir.resolve()),
-        "query_fasta": str((outdir / "inputs" / "query.fasta").resolve()),
-        "proteomes_dir": str((outdir / "inputs" / "proteomes").resolve()),
+        "query_fasta": str(query_path.resolve()) if query_path.exists() else "",
+        "proteomes_dir": str(proteomes_path.resolve()) if proteomes_path.exists() else "",
         "user_cds": str((outdir / "user_supplied" / "orthogroup_cds.fasta").resolve()),
+        "orthogroup_source": orthogroup_source,
+        "external_orthogroup_proteins": (
+            str(external_orthogroup_path.resolve()) if external_orthogroup_path.exists() else ""
+        ),
         "orthogroup_method": "orthofinder",
         "orthology_mode": str(getattr(args, "orthology_mode", "representative")).strip().lower(),
         "alignment_methods": methods,
@@ -1165,6 +1209,7 @@ def validate_resume_request(args: argparse.Namespace, argv: list[str]) -> None:
         "--prot",
         "--query",
         "--orthogroup-method",
+        "--orthogroup-proteins",
         "--orthology-mode",
         "--coverage",
         "--alignment-methods",
@@ -1235,6 +1280,7 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
 
     args.prot = cfg.get("proteomes_dir", getattr(args, "prot", None))
     args.query = cfg.get("query_fasta", getattr(args, "query", None))
+    args.orthogroup_proteins = cfg.get("external_orthogroup_proteins", getattr(args, "orthogroup_proteins", None))
     args.orthogroup_method = "orthofinder"
     args.orthology_mode = str(cfg.get("orthology_mode", "representative"))
     args.alignment_methods = str(cfg.get("alignment_method_option", alignment_option_from_methods(methods)))
@@ -1288,6 +1334,10 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
     method_count = max(1, len(methods))
     pathway_count = max(1, len(methods) * len(trim_states))
     cfg["orthogroup_method"] = "orthofinder"
+    cfg["orthogroup_source"] = str(
+        cfg.get("orthogroup_source")
+        or ("external" if cfg.get("external_orthogroup_proteins") else "orthofinder")
+    )
     cfg["orthology_mode"] = args.orthology_mode
     cfg["threads"] = int(args.threads)
     cfg["per_method_cores"] = compute_per_method_cores(int(args.threads), method_count)
@@ -1305,6 +1355,7 @@ def prepare_resume_run(args: argparse.Namespace, argv: list[str]) -> tuple[argpa
             "snake_args": cfg["snake_args"],
             "threads": cfg["threads"],
             "orthogroup_method": "orthofinder",
+            "orthogroup_source": cfg["orthogroup_source"],
             "orthology_mode": args.orthology_mode,
         },
     )
@@ -1325,9 +1376,15 @@ def run_guided_pipeline(
     print("Selected pathways:")
     for pathway in pathways:
         print(f"  - {pathway}")
+    source = orthogroup_source_from_args(args)
+    step_description = (
+        "Stage externally curated orthogroup proteins."
+        if source == "external"
+        else f"Build orthogroup proteins with OrthoFinder ({args.orthology_mode} mode)."
+    )
     orthogroup_step = StepSpec(
-        "orthofinder_orthogroup",
-        f"Build orthogroup proteins with OrthoFinder ({args.orthology_mode} mode).",
+        "define_orthogroup",
+        step_description,
         (
             "orthogroup/orthogroup_proteins.fasta",
             "orthogroup/orthogroup_headers.txt",
@@ -1433,6 +1490,7 @@ def main() -> None:
     validate_inputs(args)
     args.orthogroup_method = "orthofinder"
     args.orthology_mode = str(args.orthology_mode).strip().lower()
+    orthogroup_source = orthogroup_source_from_args(args)
     args.recombination = parse_recombination_mode(args.recombination)
     recombination_mode = effective_recombination_mode(args.recombination)
     methods = parse_alignment_method_option(args.alignment_methods)
@@ -1462,7 +1520,9 @@ def main() -> None:
         f"[INFO] Recombination screening mode: {args.recombination} "
         f"(effective: {recombination_mode})."
     )
-    print(f"[INFO] Orthology mode: {args.orthology_mode}.")
+    print(f"[INFO] Orthogroup source: {orthogroup_source}.")
+    if orthogroup_source == "orthofinder":
+        print(f"[INFO] Orthology mode: {args.orthology_mode}.")
     if recombination_mode == "gard":
         print(
             f"[INFO] GARD parameters: mode={args.gard_mode}, "
@@ -1473,7 +1533,8 @@ def main() -> None:
     if missing:
         print(format_missing_tools(missing), file=sys.stderr)
         raise SystemExit(2)
-    validate_orthogroup_method_tools(args.orthogroup_method, resolved)
+    if orthogroup_source == "orthofinder":
+        validate_orthogroup_method_tools(args.orthogroup_method, resolved)
     validate_recombination_tools(args.recombination, resolved)
     validate_selected_alignment_tools(methods, trim_states, resolved)
 

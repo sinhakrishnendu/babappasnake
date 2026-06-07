@@ -59,6 +59,7 @@ def test_write_config_keeps_trim_strategy_and_legacy_use_clipkit_flag(tmp_path):
         threads=12,
         orthogroup_method="orthofinder",
         orthology_mode="representative",
+        orthogroup_proteins=None,
         alignment_methods="4",
         run_asr="yes",
         outgroup="culex",
@@ -169,6 +170,7 @@ def test_write_config_records_run_asr_flag(tmp_path):
         threads=12,
         orthogroup_method="orthofinder",
         orthology_mode="paralog",
+        orthogroup_proteins=None,
         alignment_methods="1",
         run_asr="no",
         outgroup="culex",
@@ -282,6 +284,7 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
         cds=str(cds_path),
         orthogroup_method="orthofinder",
         orthology_mode="representative",
+        orthogroup_proteins=None,
         outdir=str(outdir),
         alignment_methods="4",
         coverage=0.7,
@@ -353,6 +356,82 @@ def test_prepare_resume_run_loads_saved_config_and_applies_overrides(tmp_path):
     assert cfg["per_pathway_cores"] == 8
     state = cli.load_resume_state(outdir)
     assert state["guided_mode"] is True
+
+
+def test_write_config_records_external_orthogroup_source(tmp_path):
+    outdir = tmp_path / "run"
+    (outdir / "user_supplied").mkdir(parents=True)
+    (outdir / "user_supplied" / "external_orthogroup_proteins.fasta").write_text(
+        ">q1\nMPEPTIDE\n>s1\nMPEPTIDE\n",
+        encoding="utf-8",
+    )
+    args = Namespace(
+        coverage=0.7,
+        threads=12,
+        orthogroup_method="orthofinder",
+        orthology_mode="representative",
+        orthogroup_proteins=str(outdir / "user_supplied" / "external_orthogroup_proteins.fasta"),
+        alignment_methods="1",
+        run_asr="yes",
+        outgroup="",
+        guided="no",
+        snake_args="",
+        iqtree_bootstrap=1000,
+        iqtree_bnni="no",
+        iqtree_model="MFP",
+        absrel_branches="Leaves",
+        meme_branches="Leaves",
+        codeml_codonfreq=7,
+        clipkit_mode_protein="kpic-smart-gap",
+        clipkit_mode_codon="kpic-smart-gap",
+        recombination="none",
+        gard_mode="Faster",
+        gard_rate_classes=3,
+        absrel_p=0.05,
+        absrel_dynamic_start=0.05,
+        absrel_dynamic_step=0.01,
+        absrel_dynamic_max=0.2,
+        meme_p=0.05,
+    )
+
+    cfg_path = cli.write_config(
+        args=args,
+        outdir=outdir,
+        executables={
+            "iqtree": "iqtree",
+            "hyphy": "hyphy",
+            "codeml": "codeml",
+        },
+        methods=["babappalign"],
+        trim_strategy="both",
+        trim_states=["raw", "clipkit"],
+        per_method_cores=4,
+        per_pathway_cores=2,
+    )
+
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    assert cfg["orthogroup_source"] == "external"
+    assert cfg["external_orthogroup_proteins"].endswith("external_orthogroup_proteins.fasta")
+
+
+def test_validate_inputs_allows_external_orthogroup_without_query_or_proteomes(tmp_path):
+    external = tmp_path / "external_orthogroup.fasta"
+    external.write_text(">q1\nMPEPTIDE\n>s1\nMPEPTIDE\n", encoding="utf-8")
+    args = Namespace(
+        prot=None,
+        query=None,
+        cds=None,
+        orthogroup_proteins=str(external),
+        orthogroup_method="orthofinder",
+        orthology_mode="representative",
+        alignment_methods="1",
+        trim_strategy="both",
+        use_clipkit="yes",
+        recombination="none",
+        gard_rate_classes=3,
+    )
+
+    cli.validate_inputs(args)
 
 
 def test_validate_resume_request_rejects_analysis_overrides(tmp_path):

@@ -17,9 +17,10 @@ def _config_bool(raw, default: bool = True) -> bool:
 
 
 OUTDIR = Path(config["outdir"])
-QUERY = config["query_fasta"]
-PROTEOMES = config["proteomes_dir"]
+QUERY = str(config.get("query_fasta", "")).strip()
+PROTEOMES = str(config.get("proteomes_dir", "")).strip()
 USER_CDS = Path(config["user_cds"])
+EXTERNAL_ORTHOGROUP_PROTEINS = str(config.get("external_orthogroup_proteins", "")).strip()
 THREADS = int(config.get("threads", 4))
 COVERAGE = float(config.get("coverage", 0.70))
 OUTGROUP_QUERY = str(config.get("outgroup_query", "")).strip()
@@ -55,8 +56,18 @@ GARD_RATE_CLASSES = int(config.get("gard_rate_classes", 3))
 if GARD_RATE_CLASSES < 1:
     raise ValueError("gard_rate_classes must be >= 1")
 RUN_GARD = RECOMBINATION_MODE == "gard"
+ORTHOGROUP_SOURCE = str(
+    config.get("orthogroup_source", "external" if EXTERNAL_ORTHOGROUP_PROTEINS else "orthofinder")
+).strip().lower()
+if ORTHOGROUP_SOURCE not in {"orthofinder", "external"}:
+    raise ValueError(
+        f"Unsupported orthogroup_source in config: {ORTHOGROUP_SOURCE}. "
+        "Supported: orthofinder, external"
+    )
+if ORTHOGROUP_SOURCE == "external" and not EXTERNAL_ORTHOGROUP_PROTEINS:
+    raise ValueError("orthogroup_source=external requires external_orthogroup_proteins.")
 ORTHOGROUP_METHOD = str(config.get("orthogroup_method", "orthofinder")).strip().lower()
-if ORTHOGROUP_METHOD != "orthofinder":
+if ORTHOGROUP_SOURCE == "orthofinder" and ORTHOGROUP_METHOD != "orthofinder":
     raise ValueError(
         f"Unsupported orthogroup_method in config: {ORTHOGROUP_METHOD}. "
         "Supported: orthofinder"
@@ -273,36 +284,54 @@ else:
             OUTDIR / "orthogroup" / "WAITING_FOR_CDS.txt"
 
 
-rule orthofinder_orthogroup:
+rule define_orthogroup:
     input:
-        query=QUERY,
-        proteomes=PROTEOMES,
+        query=QUERY if ORTHOGROUP_SOURCE == "orthofinder" else [],
+        proteomes=PROTEOMES if ORTHOGROUP_SOURCE == "orthofinder" else [],
+        external=EXTERNAL_ORTHOGROUP_PROTEINS if ORTHOGROUP_SOURCE == "external" else [],
     output:
         proteins=OUTDIR / "orthogroup" / "orthogroup_proteins.fasta",
         headers=OUTDIR / "orthogroup" / "orthogroup_headers.txt",
         summary=OUTDIR / "orthogroup" / "orthogroup_summary.tsv",
         metadata=OUTDIR / "orthogroup" / "orthogroup_metadata.json",
     threads: THREADS
+    params:
+        source=ORTHOGROUP_SOURCE,
+        orthogroup_dir=OUTDIR / "orthogroup",
+        external_query=QUERY if ORTHOGROUP_SOURCE == "external" and QUERY else "",
     shell:
         r'''
-        mkdir -p {OUTDIR}/orthogroup
-        python -m babappasnake.scripts.run_orthofinder_pipeline \
-          --query {input.query} \
-          --proteomes {input.proteomes} \
-          --outdir {OUTDIR}/orthogroup \
-          --coverage {COVERAGE} \
-          --threads {threads} \
-          --blastp "{BLASTP}" \
-          --makeblastdb "{MAKEBLASTDB}" \
-          --orthofinder "{ORTHOFINDER}" \
-          --orthology-mode "{ORTHOLOGY_MODE}";
+        mkdir -p {params.orthogroup_dir:q}
+        if [ "{params.source}" = "external" ]; then
+          if [ -n {params.external_query:q} ]; then
+            python -m babappasnake.scripts.prepare_external_orthogroup \
+              --orthogroup-proteins {input.external:q} \
+              --outdir {params.orthogroup_dir:q} \
+              --query-fasta {params.external_query:q};
+          else
+            python -m babappasnake.scripts.prepare_external_orthogroup \
+              --orthogroup-proteins {input.external:q} \
+              --outdir {params.orthogroup_dir:q};
+          fi
+        else
+          python -m babappasnake.scripts.run_orthofinder_pipeline \
+            --query {input.query:q} \
+            --proteomes {input.proteomes:q} \
+            --outdir {params.orthogroup_dir:q} \
+            --coverage {COVERAGE} \
+            --threads {threads} \
+            --blastp "{BLASTP}" \
+            --makeblastdb "{MAKEBLASTDB}" \
+            --orthofinder "{ORTHOFINDER}" \
+            --orthology-mode "{ORTHOLOGY_MODE}";
+        fi
         '''
 
 
 rule waiting_note:
     input:
-        proteins=rules.orthofinder_orthogroup.output.proteins,
-        headers=rules.orthofinder_orthogroup.output.headers,
+        proteins=rules.define_orthogroup.output.proteins,
+        headers=rules.define_orthogroup.output.headers,
     output:
         note=OUTDIR / "orthogroup" / "WAITING_FOR_CDS.txt",
     shell:
@@ -319,7 +348,7 @@ if HAVE_CDS:
 
     rule map_cds:
         input:
-            proteins=rules.orthofinder_orthogroup.output.proteins,
+            proteins=rules.define_orthogroup.output.proteins,
             cds=USER_CDS,
         output:
             mapped=OUTDIR / "mapped_cds" / "mapped_orthogroup_cds.fasta",
@@ -1027,7 +1056,7 @@ if HAVE_CDS:
 
     rule final_summary_pathway:
         input:
-            orthogroup_summary=rules.orthofinder_orthogroup.output.summary,
+            orthogroup_summary=rules.define_orthogroup.output.summary,
             mapping=rules.map_cds.output.table,
             absrel=OUTDIR / "hyphy" / "{method}" / "{trim_state}" / "significant_foregrounds.tsv",
             absrel_meta=OUTDIR / "hyphy" / "{method}" / "{trim_state}" / "foreground_threshold.json",
@@ -1218,6 +1247,7 @@ if HAVE_CDS:
                 "pathways": [f"{m}_{t}" for m in ALIGNMENT_METHODS for t in TRIM_STATES],
                 "parameters": {
                     "coverage": COVERAGE,
+                    "orthogroup_source": ORTHOGROUP_SOURCE,
                     "orthogroup_method": ORTHOGROUP_METHOD,
                     "orthology_mode": ORTHOLOGY_MODE,
                     "outgroup_query": OUTGROUP_QUERY,

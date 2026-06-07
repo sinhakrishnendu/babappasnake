@@ -3,7 +3,7 @@
 
 `babappasnake` is a command-line workflow for episodic positive selection analysis on one orthogroup at a time. It is built for practical comparative genomics: reproducible run directories, guided stepwise execution, resumable restarts after interruption, and robustness summaries across multiple alignment and trimming pathways.
 
-This README is the user manual for the current CLI and workflow behavior.
+This README is the user manual for the current command-line interface (CLI) and workflow behavior.
 
 ## Contents
 
@@ -26,17 +26,17 @@ This README is the user manual for the current CLI and workflow behavior.
 
 A typical full run performs these stages:
 
-1. Define a one-to-one orthogroup from a protein query and a proteome panel.
-2. Map user-provided CDS to the selected orthogroup proteins with coding-quality filters.
+1. Define an orthogroup from a protein query and proteome panel, or stage an externally curated orthogroup FASTA.
+2. Map user-provided coding sequence (CDS) records to the selected orthogroup proteins with coding-quality filters.
 3. Build protein and codon alignments across one or more alignment methods.
 4. Run both `raw` and `clipkit` pathway variants for robustness.
 5. Infer pathway-specific trees with IQ-TREE.
 6. Optionally root trees with an outgroup text query.
-7. Optionally screen for recombination with HyPhy GARD.
-8. Run HyPhy aBSREL and MEME.
+7. Optionally screen for recombination with HyPhy genetic algorithm for recombination detection (GARD).
+8. Run HyPhy adaptive branch-site random effects likelihood (aBSREL) and mixed effects model of evolution (MEME).
 9. Select branch-site foregrounds dynamically from aBSREL output.
 10. Run branch-site codeml.
-11. Optionally run pathway-level codeml ASR.
+11. Optionally run pathway-level codeml ancestral sequence reconstruction (ASR).
 12. Optionally extract ancestor and descendant sequences plus branch substitutions.
 13. Write pathway summaries, robustness reports, and run provenance.
 
@@ -60,17 +60,17 @@ pip install babappasnake
 
 ### External tools by feature
 
-Always needed for a complete end-to-end run:
+Always needed for a complete end-to-end run after orthogroup proteins are available:
 
-- `blastp`
-- `makeblastdb`
 - `iqtree` or `iqtree2` or `iqtree3`
 - `hyphy`
 - `codeml` from `paml`
 - `clipkit`
 
-Needed for orthogroup inference:
+Needed only when using the default OrthoFinder-assisted orthogroup mode:
 
+- `blastp`
+- `makeblastdb`
 - `orthofinder` for `--orthogroup-method orthofinder`
 
 Needed only for selected alignment methods:
@@ -117,6 +117,17 @@ Behavior:
 - If CDS is not supplied, the workflow stops after orthogroup definition and writes `orthogroup/WAITING_FOR_CDS.txt`.
 - You can then place CDS at `OUTDIR/user_supplied/orthogroup_cds.fasta` and resume.
 
+### `--orthogroup-proteins`
+
+Optional externally curated orthogroup protein FASTA.
+
+Behavior:
+
+- When provided, BABAPPASNAKE skips OrthoFinder and starts from this protein FASTA.
+- This is recommended when orthology has already been inferred, manually curated, or benchmarked outside the workflow.
+- The FASTA must contain the query protein plus at least one partner sequence.
+- If `--query` is also provided, its first sequence ID is used as the query ID in orthogroup metadata; otherwise the first record in `--orthogroup-proteins` is treated as the query.
+
 ### `--outgroup`
 
 Optional text query used to root pathway trees by case-insensitive substring matching against tip labels.
@@ -128,9 +139,15 @@ Behavior:
 
 ## Orthogroup Discovery Modes
 
+### External curated orthogroup: `--orthogroup-proteins`
+
+Orthology inference can be handled outside BABAPPASNAKE.
+Use `--orthogroup-proteins` to provide a curated protein FASTA from OrthoFinder, SonicParanoid, OMA, manual curation, or any other orthology workflow.
+The pipeline then performs CDS mapping, alignment, tree inference, HyPhy/Phylogenetic Analysis by Maximum Likelihood (PAML) analyses, robustness summaries, and provenance reporting without running orthology inference internally.
+
 ### Default: `--orthogroup-method orthofinder`
 
-OrthoFinder is the only orthogroup backend used by the workflow.
+OrthoFinder is the default built-in orthogroup helper when an external orthogroup FASTA is not supplied.
 
 Behavior:
 
@@ -184,7 +201,7 @@ Important defaults in guided mode:
 
 ### Non-interactive batch mode
 
-Use this for scripted or HPC-style runs:
+Use this for scripted or high-performance-computing-style runs:
 
 ```bash
 babappasnake \
@@ -221,6 +238,18 @@ babappasnake \
   --cds /path/to/orthogroup_cds.fasta \
   --orthology-mode paralog \
   --outdir run_paralog_mode \
+  --threads 12 \
+  --interactive no \
+  --guided no
+```
+
+### Example: start from externally curated orthogroup proteins
+
+```bash
+babappasnake \
+  --orthogroup-proteins /path/to/curated_orthogroup_proteins.fasta \
+  --cds /path/to/orthogroup_cds.fasta \
+  --outdir run_external_orthogroup \
   --threads 12 \
   --interactive no \
   --guided no
@@ -311,8 +340,8 @@ Analysis settings that define workflow structure are intentionally not changeabl
 
 ## Workflow Stages
 
-1. `orthofinder_orthogroup`
-   Build the selected orthogroup with OrthoFinder and the configured orthology mode.
+1. `define_orthogroup`
+   Build the selected orthogroup with OrthoFinder or stage externally curated orthogroup proteins.
 2. `map_cds`
    Map CDS to selected proteins and filter low-quality CDS.
 3. `align_proteins_all_methods`
@@ -334,7 +363,7 @@ Analysis settings that define workflow structure are intentionally not changeabl
 11. `prepare_foreground_trees_all_pathways`
     Build branch-labeled trees for branch-site codeml.
 12. `branchsite_batch_all_pathways`
-    Run branch-site codeml and BH-correct results.
+    Run branch-site codeml and Benjamini-Hochberg (BH)-correct results.
 13. `codeml_asr_all_pathways`
     Optional pathway-level ASR.
 14. `extract_selected_branch_ancestors`
@@ -527,6 +556,7 @@ babappasnake --resume --outdir RUN_DIR [resume overrides]
 - `--prot PATH`
 - `--query PATH`
 - `--cds PATH`
+- `--orthogroup-proteins PATH`
 - `--outdir PATH`
 - `--interactive {yes,no}`
 - `--guided {yes,no}`
@@ -608,6 +638,7 @@ Check:
 - proteome quality
 - taxon sampling
 - whether the query is biologically represented in the panel
+- whether a curated external orthogroup should be supplied with `--orthogroup-proteins`
 
 ### macOS metadata files inside the proteome directory
 
